@@ -1,6 +1,7 @@
 # Build go
 FROM golang:1.25.0-alpine AS builder
 WORKDIR /app
+RUN apk add --no-cache git ca-certificates
 COPY . .
 ENV CGO_ENABLED=0
 RUN GOEXPERIMENT=jsonv2 go mod download
