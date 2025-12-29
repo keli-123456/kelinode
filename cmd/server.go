@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"runtime"
 	"syscall"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -44,9 +45,9 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	c := conf.New()
 	err := c.LoadFromPath(config)
 	log.SetFormatter(&log.TextFormatter{
-		DisableTimestamp: true,
-		DisableQuote:     true,
-		PadLevelText:     false,
+		FullTimestamp:   true,
+		TimestampFormat: time.RFC3339,
+		PadLevelText:    false,
 	})
 	if err != nil {
 		log.WithField("err", err).Error("Load config file failed")
