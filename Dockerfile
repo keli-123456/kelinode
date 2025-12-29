@@ -8,6 +8,7 @@ RUN set -eux; \
     freedom_dir="$(GOEXPERIMENT=jsonv2 go list -f '{{.Dir}}' github.com/xtls/xray-core/proxy/freedom)"; \
     freedom_go="${freedom_dir}/freedom.go"; \
     if grep -q 'b.UDP.Address.Family().IsDomain()' "$freedom_go" && ! grep -q 'b.UDP.Address == nil' "$freedom_go"; then \
+      chmod u+w "$freedom_go" || true; \
       tmp="$(mktemp)"; \
       awk '\
         /if b\\.UDP\\.Address\\.Family\\(\\)\\.IsDomain\\(\\) \\{/ && !patched {\
