@@ -67,15 +67,18 @@ func (v *V2Core) Start(infos []*panel.NodeInfo) error {
 func (v *V2Core) Close() error {
 	v.access.Lock()
 	defer v.access.Unlock()
-	v.Config = nil
-	v.ihm = nil
-	v.ohm = nil
-	v.dispatcher = nil
-	err := v.Server.Close()
-	if err != nil {
-		return err
+	defer func() {
+		v.Config = nil
+		v.Server = nil
+		v.ihm = nil
+		v.ohm = nil
+		v.dispatcher = nil
+	}()
+
+	if v.Server == nil {
+		return nil
 	}
-	return nil
+	return v.Server.Close()
 }
 
 func getCore(c *conf.Conf, infos []*panel.NodeInfo) *core.Instance {

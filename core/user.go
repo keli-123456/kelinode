@@ -24,7 +24,10 @@ import (
 	"github.com/xtls/xray-core/proxy/vless"
 )
 
-func (v *V2Core) GetUserManager(tag string) (proxy.UserManager, error) {
+func (v *V2Core) getUserManagerLocked(tag string) (proxy.UserManager, error) {
+	if v.ihm == nil {
+		return nil, fmt.Errorf("core is not ready")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	handler, err := v.ihm.GetHandler(ctx, tag)
@@ -42,23 +45,37 @@ func (v *V2Core) GetUserManager(tag string) (proxy.UserManager, error) {
 	return userManager, nil
 }
 
+func (v *V2Core) GetUserManager(tag string) (proxy.UserManager, error) {
+	v.access.Lock()
+	defer v.access.Unlock()
+	return v.getUserManagerLocked(tag)
+}
+
 func (vc *V2Core) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeInfo) error {
-	userManager, err := vc.GetUserManager(tag)
+	vc.access.Lock()
+	defer vc.access.Unlock()
+
+	if vc.dispatcher == nil {
+		return fmt.Errorf("core is not ready")
+	}
+
+	userManager, err := vc.getUserManagerLocked(tag)
 	if err != nil {
 		return fmt.Errorf("get user manager error: %s", err)
 	}
-	var user string
-	vc.users.mapLock.Lock()
-	defer vc.users.mapLock.Unlock()
 	for i := range users {
-		user = format.UserTag(tag, users[i].Uuid)
+		user := format.UserTag(tag, users[i].Uuid)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		err = userManager.RemoveUser(ctx, user)
 		cancel()
 		if err != nil {
 			return err
 		}
+
+		vc.users.mapLock.Lock()
 		delete(vc.users.uidMap, user)
+		vc.users.mapLock.Unlock()
+
 		if v, ok := vc.dispatcher.Counter.Load(tag); ok {
 			tc := v.(*counter.TrafficCounter)
 			tc.Delete(user)
@@ -73,6 +90,13 @@ func (vc *V2Core) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeInfo
 }
 
 func (vc *V2Core) GetUserTrafficSlice(tag string, mintraffic int) ([]panel.UserTraffic, error) {
+	vc.access.Lock()
+	defer vc.access.Unlock()
+
+	if vc.dispatcher == nil {
+		return nil, nil
+	}
+
 	trafficSlice := make([]panel.UserTraffic, 0)
 	vc.users.mapLock.RLock()
 	defer vc.users.mapLock.RUnlock()
@@ -107,11 +131,20 @@ func (vc *V2Core) GetUserTrafficSlice(tag string, mintraffic int) ([]panel.UserT
 }
 
 func (v *V2Core) AddUsers(p *AddUsersParams) (added int, err error) {
+	v.access.Lock()
+	defer v.access.Unlock()
+
+	man, err := v.getUserManagerLocked(p.Tag)
+	if err != nil {
+		return 0, fmt.Errorf("get user manager error: %s", err)
+	}
+
 	v.users.mapLock.Lock()
-	defer v.users.mapLock.Unlock()
 	for i := range p.Users {
 		v.users.uidMap[format.UserTag(p.Tag, p.Users[i].Uuid)] = p.Users[i].Id
 	}
+	v.users.mapLock.Unlock()
+
 	var users []*protocol.User
 	switch p.NodeInfo.Type {
 	case "vmess":
@@ -133,10 +166,6 @@ func (v *V2Core) AddUsers(p *AddUsersParams) (added int, err error) {
 		users = buildAnyTLSUsers(p.Tag, p.Users)
 	default:
 		return 0, fmt.Errorf("unsupported node type: %s", p.NodeInfo.Type)
-	}
-	man, err := v.GetUserManager(p.Tag)
-	if err != nil {
-		return 0, fmt.Errorf("get user manager error: %s", err)
 	}
 	for _, u := range users {
 		mUser, err := u.ToMemoryUser()

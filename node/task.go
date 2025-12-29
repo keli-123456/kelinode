@@ -83,6 +83,8 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 		} else {
 			log.Panic("Reload failed")
 		}
+		// Stop current task execution. Core/nodes may be closing/reloading now.
+		return nil
 	}
 	log.WithField("tag", c.tag).Debug("Node info no change")
 
