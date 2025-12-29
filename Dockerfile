@@ -4,6 +4,24 @@ WORKDIR /app
 COPY . .
 ENV CGO_ENABLED=0
 RUN GOEXPERIMENT=jsonv2 go mod download
+RUN set -eux; \
+    freedom_dir="$(GOEXPERIMENT=jsonv2 go list -f '{{.Dir}}' github.com/xtls/xray-core/proxy/freedom)"; \
+    freedom_go="${freedom_dir}/freedom.go"; \
+    if grep -q 'b.UDP.Address.Family().IsDomain()' "$freedom_go" && ! grep -q 'b.UDP.Address == nil' "$freedom_go"; then \
+      tmp="$(mktemp)"; \
+      awk '\
+        /if b\\.UDP\\.Address\\.Family\\(\\)\\.IsDomain\\(\\) \\{/ && !patched {\
+          print "\t\t\tif b.UDP.Address == nil {";\
+          print "\t\t\t\tb.Release()";\
+          print "\t\t\t\tcontinue";\
+          print "\t\t\t}";\
+          patched=1;\
+        }\
+        { print }\
+      ' "$freedom_go" > "$tmp"; \
+      cat "$tmp" > "$freedom_go"; \
+      rm "$tmp"; \
+    fi
 RUN GOEXPERIMENT=jsonv2 go build -v -o v2node
 
 # Release
