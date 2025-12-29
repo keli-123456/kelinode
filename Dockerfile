@@ -3,6 +3,7 @@ FROM golang:1.25.0-alpine AS builder
 WORKDIR /app
 COPY . .
 ENV CGO_ENABLED=0
+ENV GOFLAGS=-modcacherw
 RUN GOEXPERIMENT=jsonv2 go mod download
 RUN set -eux; \
     freedom_dir="$(GOEXPERIMENT=jsonv2 go list -f '{{.Dir}}' github.com/xtls/xray-core/proxy/freedom)"; \
