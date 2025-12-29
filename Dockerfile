@@ -22,7 +22,8 @@ RUN set -eux; \
       ' "$freedom_go" > "$tmp"; \
       cat "$tmp" > "$freedom_go"; \
       rm "$tmp"; \
-    fi
+    fi; \
+    true
 RUN GOEXPERIMENT=jsonv2 go build -v -o v2node
 
 # Release
