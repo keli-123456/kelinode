@@ -6,13 +6,14 @@ ENV CGO_ENABLED=0
 ENV GOFLAGS=-modcacherw
 RUN GOEXPERIMENT=jsonv2 go mod download
 RUN set -eux; \
-    modcache="$(GOEXPERIMENT=jsonv2 go env GOMODCACHE)"; \
-    freedom_go="$(find "$modcache" -path '*/github.com/wyx2685/xray-core@*/proxy/freedom/freedom.go' -print -quit || true)"; \
-    if [ -z "$freedom_go" ]; then \
-      freedom_go="$(find "$modcache" -path '*/github.com/xtls/xray-core@*/proxy/freedom/freedom.go' -print -quit || true)"; \
+    xray_dir="$(GOEXPERIMENT=jsonv2 go mod download -json github.com/xtls/xray-core | sed -n 's/.*\"Dir\":\"\\([^\"]*\\)\".*/\\1/p')"; \
+    if [ -z "$xray_dir" ] || [ ! -d "$xray_dir" ]; then \
+      echo "v2node: failed to locate xray-core in module cache" >&2; \
+      exit 1; \
     fi; \
-    if [ -z "$freedom_go" ] || [ ! -f "$freedom_go" ]; then \
-      echo "v2node: freedom.go not found in module cache" >&2; \
+    freedom_go="${xray_dir}/proxy/freedom/freedom.go"; \
+    if [ ! -f "$freedom_go" ]; then \
+      echo "v2node: freedom.go not found: $freedom_go" >&2; \
       exit 1; \
     fi; \
     if grep -q 'b.UDP.Address.Family().IsDomain()' "$freedom_go" && ! grep -q 'b.UDP.Address == nil' "$freedom_go"; then \
