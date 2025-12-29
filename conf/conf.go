@@ -14,8 +14,14 @@ type Conf struct {
 }
 
 type LogConfig struct {
-	Level  string `mapstructure:"Level"`
+	// Level controls v2node's own logrus level.
+	Level string `mapstructure:"Level"`
+	// CoreLevel controls Xray Core's log level. If empty, it falls back to Level.
+	CoreLevel string `mapstructure:"CoreLevel"`
+	// Output is v2node's log output file path. If empty, logs go to stdout.
+	// Note: currently Xray Core's error log path also uses this value.
 	Output string `mapstructure:"Output"`
+	// Access controls Xray Core access log output ("none" disables access logs).
 	Access string `mapstructure:"Access"`
 }
 
@@ -29,9 +35,10 @@ type NodeConfig struct {
 func New() *Conf {
 	return &Conf{
 		LogConfig: LogConfig{
-			Level:  "info",
-			Output: "",
-			Access: "none",
+			Level:     "info",
+			CoreLevel: "",
+			Output:    "",
+			Access:    "none",
 		},
 	}
 }

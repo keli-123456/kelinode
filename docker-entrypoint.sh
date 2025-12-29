@@ -9,6 +9,9 @@ API_KEY="${V2NODE_API_KEY:-${API_KEY:-}}"
 TIMEOUT_RAW="${V2NODE_TIMEOUT:-${TIMEOUT:-}}"
 TIMEOUT="${TIMEOUT_RAW:-15}"
 
+LOG_LEVEL="${V2NODE_LOG_LEVEL:-info}"
+CORE_LOG_LEVEL="${V2NODE_CORE_LOG_LEVEL:-error}"
+
 TLS_CERT_URL="${V2NODE_TLS_CERT_URL:-${V2NODE_CERT_URL:-}}"
 TLS_KEY_URL="${V2NODE_TLS_KEY_URL:-${V2NODE_KEY_URL:-}}"
 
@@ -135,7 +138,8 @@ generate_config_from_env() {
 	cat >"$CONFIG_PATH" <<-EOF
 	{
 	  "Log": {
-	    "Level": "warning",
+	    "Level": "${LOG_LEVEL}",
+	    "CoreLevel": "${CORE_LOG_LEVEL}",
 	    "Output": "",
 	    "Access": "none"
 	  },

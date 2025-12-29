@@ -79,9 +79,13 @@ func (v *V2Core) Close() error {
 }
 
 func getCore(c *conf.Conf, infos []*panel.NodeInfo) *core.Instance {
+	logLevel := c.LogConfig.Level
+	if c.LogConfig.CoreLevel != "" {
+		logLevel = c.LogConfig.CoreLevel
+	}
 	// Log Config
 	coreLogConfig := &coreConf.LogConfig{
-		LogLevel:  c.LogConfig.Level,
+		LogLevel:  logLevel,
 		AccessLog: c.LogConfig.Access,
 		ErrorLog:  c.LogConfig.Output,
 	}
