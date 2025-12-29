@@ -6,8 +6,15 @@ ENV CGO_ENABLED=0
 ENV GOFLAGS=-modcacherw
 RUN GOEXPERIMENT=jsonv2 go mod download
 RUN set -eux; \
-    freedom_dir="$(GOEXPERIMENT=jsonv2 go list -f '{{.Dir}}' github.com/xtls/xray-core/proxy/freedom)"; \
-    freedom_go="${freedom_dir}/freedom.go"; \
+    modcache="$(GOEXPERIMENT=jsonv2 go env GOMODCACHE)"; \
+    freedom_go="$(find "$modcache" -path '*/github.com/wyx2685/xray-core@*/proxy/freedom/freedom.go' -print -quit || true)"; \
+    if [ -z "$freedom_go" ]; then \
+      freedom_go="$(find "$modcache" -path '*/github.com/xtls/xray-core@*/proxy/freedom/freedom.go' -print -quit || true)"; \
+    fi; \
+    if [ -z "$freedom_go" ] || [ ! -f "$freedom_go" ]; then \
+      echo "v2node: freedom.go not found in module cache" >&2; \
+      exit 1; \
+    fi; \
     if grep -q 'b.UDP.Address.Family().IsDomain()' "$freedom_go" && ! grep -q 'b.UDP.Address == nil' "$freedom_go"; then \
       chmod u+w "$freedom_go" || true; \
       tmp="$(mktemp)"; \
