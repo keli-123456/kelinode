@@ -62,6 +62,9 @@ func (c *Client) GetUserList(ctx context.Context) ([]UserInfo, error) {
 	if strings.Contains(r.Header().Get("Content-Type"), "application/x-msgpack") {
 		decoder := msgpack.NewDecoder(r.RawResponse.Body)
 		if err := decoder.Decode(userlist); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+				return nil, nil
+			}
 			return nil, fmt.Errorf("decode user list error: %w", err)
 		}
 	} else {
@@ -69,6 +72,9 @@ func (c *Client) GetUserList(ctx context.Context) ([]UserInfo, error) {
 		for {
 			tok, err := dec.ReadToken()
 			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+					return nil, nil
+				}
 				return nil, fmt.Errorf("decode user list error: %w", err)
 			}
 			if tok.Kind() == '"' && tok.String() == "users" {
@@ -77,6 +83,9 @@ func (c *Client) GetUserList(ctx context.Context) ([]UserInfo, error) {
 		}
 		tok, err := dec.ReadToken()
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+				return nil, nil
+			}
 			return nil, fmt.Errorf("decode user list error: %w", err)
 		}
 		if tok.Kind() != '[' {
@@ -85,6 +94,9 @@ func (c *Client) GetUserList(ctx context.Context) ([]UserInfo, error) {
 		for dec.PeekKind() != ']' {
 			val, err := dec.ReadValue()
 			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+					return nil, nil
+				}
 				return nil, fmt.Errorf("decode user list error: read user object: %w", err)
 			}
 			var u UserInfo
