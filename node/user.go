@@ -16,6 +16,7 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 		devicemin = c.info.Common.BaseConfig.DeviceOnlineMinTraffic
 	}
 	userTraffic, _ := c.server.GetUserTrafficSlice(c.tag, reportmin)
+	hadTraffic := len(userTraffic) > 0
 	if len(userTraffic) > 0 {
 		err = c.apiClient.ReportUserTraffic(ctx, userTraffic)
 		if err != nil {
@@ -29,12 +30,13 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 		}
 	}
 
-	if onlineDevice, err := c.limiter.GetOnlineDevice(); err != nil {
+	onlineDevice, onlineErr := c.limiter.GetOnlineDevice()
+	if onlineErr != nil {
 		log.WithFields(log.Fields{
 			"tag": c.tag,
-			"err": err,
+			"err": onlineErr,
 		}).Error("Get online device failed")
-	} else if len(*onlineDevice) > 0 {
+	} else if onlineDevice != nil && len(*onlineDevice) > 0 {
 		var result []panel.OnlineUser
 		var nocountUID = make(map[int]struct{})
 		for _, traffic := range userTraffic {
@@ -62,6 +64,8 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 			log.WithField("tag", c.tag).Infof("Total %d online users, %d Reported", len(*onlineDevice), len(result))
 			//log.WithField("tag", c.tag).Debugf("Online users: %+v", data)
 		}
+	} else if !hadTraffic {
+		log.WithField("tag", c.tag).Info("No traffic or online activity to report")
 	}
 
 	userTraffic = nil

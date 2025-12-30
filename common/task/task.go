@@ -33,26 +33,42 @@ func (t *Task) Start(first bool) error {
 	go func() {
 		defer t.safeStop()
 
-		timer := time.NewTimer(t.Interval)
-		defer timer.Stop()
-		if first {
-			if err := t.ExecuteWithTimeout(); err != nil {
-				log.Errorf("Task %s execution error: %v", t.Name, err)
+		execToken := make(chan struct{}, 1)
+		execToken <- struct{}{}
+
+		run := func() {
+			select {
+			case <-t.Stop:
 				return
+			default:
+			}
+
+			select {
+			case <-execToken:
+				go func() {
+					defer func() { execToken <- struct{}{} }()
+					if err := t.ExecuteWithTimeout(); err != nil {
+						log.Errorf("Task %s execution error: %v", t.Name, err)
+						t.safeStop()
+					}
+				}()
+			default:
+				log.Warnf("Task %s previous execution still running, skip", t.Name)
 			}
 		}
 
+		if first {
+			run()
+		}
+
+		timer := time.NewTimer(t.Interval)
+		defer timer.Stop()
 		for {
-			timer.Reset(t.Interval)
 			select {
 			case <-timer.C:
-				// continue
+				run()
+				timer.Reset(t.Interval)
 			case <-t.Stop:
-				return
-			}
-
-			if err := t.ExecuteWithTimeout(); err != nil {
-				log.Errorf("Task %s execution error: %v", t.Name, err)
 				return
 			}
 		}
