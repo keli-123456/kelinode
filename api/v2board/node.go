@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -110,45 +111,53 @@ type EncSettings struct {
 	PrivateKey    string `json:"private_key"`
 }
 
-func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
+func (c *Client) GetNodeInfo(ctx context.Context) (node *NodeInfo, err error) {
 	const path = "/api/v2/server/config"
 	r, err := c.client.
 		R().
+		SetContext(ctx).
 		SetHeader("If-None-Match", c.nodeEtag).
 		ForceContentType("application/json").
 		Get(path)
 
-	if r.StatusCode() == 304 {
-		return nil, nil
-	}
-	hash := sha256.Sum256(r.Body())
-	newBodyHash := hex.EncodeToString(hash[:])
-	if c.responseBodyHash == newBodyHash {
-		return nil, nil
-	}
-	c.responseBodyHash = newBodyHash
-	c.nodeEtag = r.Header().Get("ETag")
 	if err != nil {
 		return nil, err
 	}
-
-	if r != nil {
-		defer func() {
-			if r.RawBody() != nil {
-				r.RawBody().Close()
-			}
-		}()
-	} else {
+	if r == nil {
 		return nil, fmt.Errorf("received nil response")
+	}
+
+	if r.StatusCode() == 304 {
+		if etag := r.Header().Get("ETag"); etag != "" {
+			c.nodeEtag = etag
+		}
+		return nil, nil
 	}
 	node = &NodeInfo{
 		Id: c.NodeId,
 	}
 	// parse protocol params
 	cm := &CommonNode{}
-	err = json.Unmarshal(r.Body(), cm)
+	if err := json.Unmarshal(r.Body(), cm); err != nil {
+		return nil, fmt.Errorf("decode node params error: %w", err)
+	}
+
+	canonicalBody, err := json.Marshal(cm)
 	if err != nil {
-		return nil, fmt.Errorf("decode node params error: %s", err)
+		return nil, fmt.Errorf("encode node params error: %w", err)
+	}
+
+	hash := sha256.Sum256(canonicalBody)
+	newBodyHash := hex.EncodeToString(hash[:])
+	if c.responseBodyHash == newBodyHash {
+		if etag := r.Header().Get("ETag"); etag != "" {
+			c.nodeEtag = etag
+		}
+		return nil, nil
+	}
+	c.responseBodyHash = newBodyHash
+	if etag := r.Header().Get("ETag"); etag != "" {
+		c.nodeEtag = etag
 	}
 	switch cm.Protocol {
 	case "vmess", "trojan", "hysteria2", "tuic", "anytls", "vless":
@@ -190,8 +199,16 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 	}
 
 	// set interval
-	node.PushInterval = intervalToTime(cm.BaseConfig.PushInterval)
-	node.PullInterval = intervalToTime(cm.BaseConfig.PullInterval)
+	if cm.BaseConfig != nil {
+		node.PushInterval = intervalToTime(cm.BaseConfig.PushInterval)
+		node.PullInterval = intervalToTime(cm.BaseConfig.PullInterval)
+	}
+	if node.PushInterval <= 0 {
+		node.PushInterval = 60 * time.Second
+	}
+	if node.PullInterval <= 0 {
+		node.PullInterval = 60 * time.Second
+	}
 
 	node.Common = cm
 
@@ -199,6 +216,9 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 }
 
 func intervalToTime(i interface{}) time.Duration {
+	if i == nil {
+		return 0
+	}
 	switch reflect.TypeOf(i).Kind() {
 	case reflect.Int:
 		return time.Duration(i.(int)) * time.Second

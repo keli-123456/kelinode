@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -14,15 +15,15 @@ func (c *Controller) startTasks(node *panel.NodeInfo) {
 	c.nodeInfoMonitorPeriodic = &task.Task{
 		Name:     "nodeInfoMonitor",
 		Interval: node.PullInterval,
+		Timeout:  10 * time.Minute,
 		Execute:  c.nodeInfoMonitor,
-		Reload:   c.reloadTask,
 	}
 	// fetch user list task
 	c.userReportPeriodic = &task.Task{
 		Name:     "reportUserTrafficTask",
 		Interval: node.PushInterval,
+		Timeout:  10 * time.Minute,
 		Execute:  c.reportUserTrafficTask,
-		Reload:   c.reloadTask,
 	}
 	log.WithField("tag", c.tag).Info("Start monitor node status")
 	// delay to start nodeInfoMonitor
@@ -36,8 +37,8 @@ func (c *Controller) startTasks(node *panel.NodeInfo) {
 			c.renewCertPeriodic = &task.Task{
 				Name:     "renewCertTask",
 				Interval: time.Hour * 24,
+				Timeout:  30 * time.Minute,
 				Execute:  c.renewCertTask,
-				Reload:   c.reloadTask,
 			}
 			log.WithField("tag", c.tag).Info("Start renew cert")
 			// delay to start renewCert
@@ -60,9 +61,9 @@ func (c *Controller) reloadTask() {
 	c.startTasks(c.info)
 }
 
-func (c *Controller) nodeInfoMonitor() (err error) {
+func (c *Controller) nodeInfoMonitor(ctx context.Context) (err error) {
 	// get node info
-	newN, err := c.apiClient.GetNodeInfo()
+	newN, err := c.apiClient.GetNodeInfo(ctx)
 	if err != nil {
 		log.WithFields(log.Fields{
 			"tag": c.tag,
@@ -73,7 +74,7 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 	if newN != nil {
 		log.WithFields(log.Fields{
 			"tag": c.tag,
-		}).Error("Got new node info, reload")
+		}).Info("Got new node info, reload")
 		// Non-blocking signal to avoid goroutine stuck when channel is full or nil
 		if c.server.ReloadCh != nil {
 			select {
@@ -89,7 +90,7 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 	log.WithField("tag", c.tag).Debug("Node info no change")
 
 	// get user info
-	newU, err := c.apiClient.GetUserList()
+	newU, err := c.apiClient.GetUserList(ctx)
 	if err != nil {
 		log.WithFields(log.Fields{
 			"tag": c.tag,
@@ -98,7 +99,7 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 		return nil
 	}
 	// get user alive
-	newA, err := c.apiClient.GetUserAlive()
+	newA, err := c.apiClient.GetUserAlive(ctx)
 	if err != nil {
 		log.WithFields(log.Fields{
 			"tag": c.tag,

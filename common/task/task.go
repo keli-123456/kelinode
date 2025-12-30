@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -9,13 +10,14 @@ import (
 )
 
 type Task struct {
-	Name     string
-	Interval time.Duration
-	Execute  func() error
-	Reload   func()
-	Access   sync.RWMutex
-	Running  bool
-	Stop     chan struct{}
+	Name      string
+	Interval  time.Duration
+	Timeout   time.Duration
+	Execute   func(ctx context.Context) error
+	OnTimeout func()
+	Access    sync.RWMutex
+	Running   bool
+	Stop      chan struct{}
 }
 
 func (t *Task) Start(first bool) error {
@@ -29,11 +31,13 @@ func (t *Task) Start(first bool) error {
 	t.Access.Unlock()
 
 	go func() {
+		defer t.safeStop()
+
 		timer := time.NewTimer(t.Interval)
 		defer timer.Stop()
 		if first {
 			if err := t.ExecuteWithTimeout(); err != nil {
-				t.safeStop()
+				log.Errorf("Task %s execution error: %v", t.Name, err)
 				return
 			}
 		}
@@ -58,22 +62,28 @@ func (t *Task) Start(first bool) error {
 }
 
 func (t *Task) ExecuteWithTimeout() error {
-	ctx, cancel := context.WithTimeout(context.Background(), min(3*t.Interval, 5*time.Minute))
-	defer cancel()
-	done := make(chan error, 1)
-
-	go func() {
-		done <- t.Execute()
-	}()
-
-	select {
-	case <-ctx.Done():
-		log.Errorf("Task %s execution timed out, reloading", t.Name)
-		t.Reload()
-		return nil
-	case err := <-done:
-		return err
+	timeout := t.Timeout
+	if timeout <= 0 {
+		timeout = min(3*t.Interval, 5*time.Minute)
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	err := t.Execute(ctx)
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		log.WithField("timeout", timeout).Errorf("Task %s execution timed out", t.Name)
+		if t.OnTimeout != nil {
+			t.OnTimeout()
+		}
+		return nil
+	}
+
+	return err
 }
 
 func (t *Task) safeStop() {
