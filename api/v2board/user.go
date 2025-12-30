@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"encoding/json/jsontext"
@@ -26,6 +27,16 @@ type UserInfo struct {
 
 type UserListBody struct {
 	Users []UserInfo `json:"users" msgpack:"users"`
+}
+
+var ErrUserDeltaNotSupported = errors.New("user_delta not supported")
+
+type UserDeltaBody struct {
+	Full     bool       `json:"full" msgpack:"full"`
+	Revision int64      `json:"revision" msgpack:"revision"`
+	Users    []UserInfo `json:"users" msgpack:"users"`
+	Deleted  []UserInfo `json:"deleted" msgpack:"deleted"`
+	Upsert   []UserInfo `json:"upsert" msgpack:"upsert"`
 }
 
 type AliveMap struct {
@@ -108,6 +119,41 @@ func (c *Client) GetUserList(ctx context.Context) ([]UserInfo, error) {
 	}
 	c.userEtag = r.Header().Get("ETag")
 	return userlist.Users, nil
+}
+
+func (c *Client) GetUserDelta(ctx context.Context, since int64) (*UserDeltaBody, error) {
+	const path = "/api/v1/server/UniProxy/user_delta"
+
+	r, err := c.client.R().
+		SetContext(ctx).
+		SetQueryParam("since", strconv.FormatInt(since, 10)).
+		SetHeader("X-Response-Format", "msgpack").
+		ForceContentType("application/json").
+		Get(path)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if r == nil {
+		return nil, fmt.Errorf("received nil response")
+	}
+	if r.StatusCode() == 404 {
+		return nil, ErrUserDeltaNotSupported
+	}
+	if r.StatusCode() >= 400 {
+		return nil, fmt.Errorf("user_delta request failed: %s", r.Status())
+	}
+
+	resp := &UserDeltaBody{}
+	if err := json.Unmarshal(r.Body(), resp); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("decode user delta error: %w", err)
+	}
+	return resp, nil
 }
 
 // GetUserAlive will fetch the alive_ip count for users

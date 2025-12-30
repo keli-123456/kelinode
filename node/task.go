@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	panel "github.com/keli-123456/kelinode/api/v2board"
@@ -100,15 +101,68 @@ func (c *Controller) nodeConfigMonitor(ctx context.Context) (err error) {
 }
 
 func (c *Controller) nodeUserMonitor(ctx context.Context) (err error) {
-	// get user info
-	newU, err := c.apiClient.GetUserList(ctx)
-	if err != nil {
-		log.WithFields(log.Fields{
-			"tag": c.tag,
-			"err": err,
-		}).Error("Get user list failed")
-		return nil
+	var (
+		deleted []panel.UserInfo
+		added   []panel.UserInfo
+		updated []panel.UserInfo
+	)
+
+	// get user info (prefer delta)
+	if c.userDeltaSupported {
+		delta, derr := c.apiClient.GetUserDelta(ctx, c.userRevision)
+		if derr != nil {
+			if errors.Is(derr, panel.ErrUserDeltaNotSupported) {
+				c.userDeltaSupported = false
+			} else {
+				log.WithFields(log.Fields{
+					"tag": c.tag,
+					"err": derr,
+				}).Error("Get user delta failed")
+			}
+		} else if delta != nil {
+			c.userRevision = delta.Revision
+			if delta.Full {
+				newU := delta.Users
+				if len(newU) == 0 {
+					log.WithField("tag", c.tag).Debug("User list no change")
+				} else {
+					deleted, added, updated = compareUserList(c.userList, newU)
+					c.userList = newU
+				}
+			} else {
+				if len(delta.Deleted) == 0 && len(delta.Upsert) == 0 {
+					log.WithField("tag", c.tag).Debug("User list no change")
+				} else {
+					next, deletedApplied, addedApplied, updatedApplied := applyUserDelta(c.userList, delta.Deleted, delta.Upsert)
+					deleted, added, updated = deletedApplied, addedApplied, updatedApplied
+					c.userList = next
+				}
+			}
+			if c.userSyncStatePath != "" {
+				_ = saveUserSyncState(c.userSyncStatePath, &userSyncStateFile{Revision: c.userRevision, Users: c.userList})
+			}
+		}
 	}
+
+	// fallback to full user list API
+	if !c.userDeltaSupported {
+		newU, err := c.apiClient.GetUserList(ctx)
+		if err != nil {
+			log.WithFields(log.Fields{
+				"tag": c.tag,
+				"err": err,
+			}).Error("Get user list failed")
+			return nil
+		}
+		// node no changed, check users
+		if len(newU) == 0 {
+			log.WithField("tag", c.tag).Debug("User list no change")
+		} else {
+			deleted, added, updated = compareUserList(c.userList, newU)
+			c.userList = newU
+		}
+	}
+
 	// get user alive
 	newA, err := c.apiClient.GetUserAlive(ctx)
 	if err != nil {
@@ -123,12 +177,6 @@ func (c *Controller) nodeUserMonitor(ctx context.Context) (err error) {
 	if newA != nil {
 		c.limiter.AliveList = newA
 	}
-	// node no changed, check users
-	if len(newU) == 0 {
-		log.WithField("tag", c.tag).Debug("User list no change")
-		return nil
-	}
-	deleted, added, updated := compareUserList(c.userList, newU)
 	if len(updated) > 0 {
 		c.limiter.UpdateUserInfo(c.tag, updated)
 		if err := c.server.UpdateUserIDs(c.tag, updated); err != nil {
@@ -182,7 +230,6 @@ func (c *Controller) nodeUserMonitor(ctx context.Context) (err error) {
 			return nil
 		}
 	}
-	c.userList = newU
 	if len(added)+len(deleted)+len(updated) != 0 {
 		log.WithField("tag", c.tag).
 			Infof("%d user deleted, %d user added, %d user updated", len(deleted), len(added), len(updated))

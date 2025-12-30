@@ -19,6 +19,9 @@ type Controller struct {
 	tag                       string
 	limiter                   *limiter.Limiter
 	userList                  []panel.UserInfo
+	userRevision              int64
+	userDeltaSupported        bool
+	userSyncStatePath         string
 	aliveMap                  map[int]int
 	conf                      *conf.NodeConfig
 	info                      *panel.NodeInfo
@@ -31,9 +34,13 @@ type Controller struct {
 // NewController return a Node controller with default parameters.
 func NewController(api *panel.Client, conf *conf.NodeConfig, info *panel.NodeInfo) *Controller {
 	controller := &Controller{
-		apiClient: api,
-		info:      info,
-		conf:      conf,
+		apiClient:          api,
+		info:               info,
+		conf:               conf,
+		userDeltaSupported: true,
+	}
+	if conf != nil {
+		controller.userSyncStatePath = userSyncStatePath(conf.APIHost, conf.NodeID)
 	}
 	return controller
 }
@@ -53,7 +60,7 @@ func (c *Controller) Start(x *core.V2Core) error {
 		node = c.info
 	}
 	// Update user
-	c.userList, err = c.apiClient.GetUserList(context.Background())
+	c.userList, err = c.loadAndSyncUsers(context.Background())
 	if err != nil {
 		return fmt.Errorf("get user list error: %s", err)
 	}
@@ -92,6 +99,55 @@ func (c *Controller) Start(x *core.V2Core) error {
 	c.info = node
 	c.startTasks(node)
 	return nil
+}
+
+func (c *Controller) loadAndSyncUsers(ctx context.Context) ([]panel.UserInfo, error) {
+	// Try to warm start from local cache (revision + user list), then catch up via delta.
+	if c.userDeltaSupported && c.userSyncStatePath != "" {
+		if state, err := loadUserSyncState(c.userSyncStatePath); err == nil && state != nil && len(state.Users) > 0 && state.Revision > 0 {
+			if delta, err := c.apiClient.GetUserDelta(ctx, state.Revision); err == nil && delta != nil {
+				if delta.Full {
+					c.userRevision = delta.Revision
+					_ = saveUserSyncState(c.userSyncStatePath, &userSyncStateFile{Revision: c.userRevision, Users: delta.Users})
+					return delta.Users, nil
+				}
+				next, _, _, _ := applyUserDelta(state.Users, delta.Deleted, delta.Upsert)
+				c.userRevision = delta.Revision
+				_ = saveUserSyncState(c.userSyncStatePath, &userSyncStateFile{Revision: c.userRevision, Users: next})
+				return next, nil
+			} else if errors.Is(err, panel.ErrUserDeltaNotSupported) {
+				c.userDeltaSupported = false
+			}
+		}
+	}
+
+	// Fallback: fetch from panel.
+	if c.userDeltaSupported {
+		delta, err := c.apiClient.GetUserDelta(ctx, 0)
+		if err != nil {
+			if errors.Is(err, panel.ErrUserDeltaNotSupported) {
+				c.userDeltaSupported = false
+			} else {
+				return nil, err
+			}
+		} else if delta != nil {
+			users := delta.Users
+			if !delta.Full {
+				users = delta.Upsert
+			}
+			c.userRevision = delta.Revision
+			if c.userSyncStatePath != "" {
+				_ = saveUserSyncState(c.userSyncStatePath, &userSyncStateFile{Revision: c.userRevision, Users: users})
+			}
+			return users, nil
+		}
+	}
+
+	users, err := c.apiClient.GetUserList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return users, nil
 }
 
 // Close implement the Close() function of the service interface
