@@ -7,7 +7,9 @@ API_HOST="${V2NODE_API_HOST:-${API_HOST:-}}"
 NODE_ID="${V2NODE_NODE_ID:-${NODE_ID:-}}"
 API_KEY="${V2NODE_API_KEY:-${API_KEY:-}}"
 TIMEOUT_RAW="${V2NODE_TIMEOUT:-${TIMEOUT:-}}"
-TIMEOUT="${TIMEOUT_RAW:-5}"
+# Panel API timeout (seconds). Needs to be long enough to download the initial full user list
+# for large deployments; subsequent pulls usually hit ETag/304 and return quickly.
+TIMEOUT="${TIMEOUT_RAW:-30}"
 
 LOG_LEVEL="${V2NODE_LOG_LEVEL:-info}"
 CORE_LOG_LEVEL="${V2NODE_CORE_LOG_LEVEL:-error}"
