@@ -11,12 +11,19 @@ import (
 )
 
 func (c *Controller) startTasks(node *panel.NodeInfo) {
-	// fetch node info task
-	c.nodeInfoMonitorPeriodic = &task.Task{
-		Name:     "nodeInfoMonitor",
+	// fetch node config task (lightweight, for reload detection)
+	c.nodeConfigMonitorPeriodic = &task.Task{
+		Name:     "nodeConfigMonitor",
+		Interval: node.PullInterval,
+		Timeout:  2 * time.Minute,
+		Execute:  c.nodeConfigMonitor,
+	}
+	// sync users/alive list task (may be heavier)
+	c.nodeUserMonitorPeriodic = &task.Task{
+		Name:     "nodeUserMonitor",
 		Interval: node.PullInterval,
 		Timeout:  10 * time.Minute,
-		Execute:  c.nodeInfoMonitor,
+		Execute:  c.nodeUserMonitor,
 	}
 	// fetch user list task
 	c.userReportPeriodic = &task.Task{
@@ -26,8 +33,9 @@ func (c *Controller) startTasks(node *panel.NodeInfo) {
 		Execute:  c.reportUserTrafficTask,
 	}
 	log.WithField("tag", c.tag).Info("Start monitor node status")
-	// delay to start nodeInfoMonitor
-	_ = c.nodeInfoMonitorPeriodic.Start(false)
+	_ = c.nodeConfigMonitorPeriodic.Start(false)
+	log.WithField("tag", c.tag).Info("Start sync users status")
+	_ = c.nodeUserMonitorPeriodic.Start(false)
 	log.WithField("tag", c.tag).Info("Start report node status")
 	_ = c.userReportPeriodic.Start(false)
 	if node.Security == panel.Tls {
@@ -53,7 +61,8 @@ func (c *Controller) reloadTask() {
 		log.Panic("Tasks reload failed")
 	}
 	c.apiClient = newClient
-	c.nodeInfoMonitorPeriodic.Close()
+	c.nodeConfigMonitorPeriodic.Close()
+	c.nodeUserMonitorPeriodic.Close()
 	c.userReportPeriodic.Close()
 	if c.renewCertPeriodic != nil {
 		c.renewCertPeriodic.Close()
@@ -61,8 +70,7 @@ func (c *Controller) reloadTask() {
 	c.startTasks(c.info)
 }
 
-func (c *Controller) nodeInfoMonitor(ctx context.Context) (err error) {
-	// get node info
+func (c *Controller) nodeConfigMonitor(ctx context.Context) (err error) {
 	newN, err := c.apiClient.GetNodeInfo(ctx)
 	if err != nil {
 		log.WithFields(log.Fields{
@@ -88,7 +96,10 @@ func (c *Controller) nodeInfoMonitor(ctx context.Context) (err error) {
 		return nil
 	}
 	log.WithField("tag", c.tag).Debug("Node info no change")
+	return nil
+}
 
+func (c *Controller) nodeUserMonitor(ctx context.Context) (err error) {
 	// get user info
 	newU, err := c.apiClient.GetUserList(ctx)
 	if err != nil {
@@ -117,7 +128,17 @@ func (c *Controller) nodeInfoMonitor(ctx context.Context) (err error) {
 		log.WithField("tag", c.tag).Debug("User list no change")
 		return nil
 	}
-	deleted, added := compareUserList(c.userList, newU)
+	deleted, added, updated := compareUserList(c.userList, newU)
+	if len(updated) > 0 {
+		c.limiter.UpdateUserInfo(c.tag, updated)
+		if err := c.server.UpdateUserIDs(c.tag, updated); err != nil {
+			log.WithFields(log.Fields{
+				"tag": c.tag,
+				"err": err,
+			}).Error("Update users failed")
+			return nil
+		}
+	}
 	if len(deleted) > 0 {
 		// have deleted users
 		err = c.server.DelUsers(deleted, c.tag, c.info)
@@ -156,9 +177,9 @@ func (c *Controller) nodeInfoMonitor(ctx context.Context) (err error) {
 		}
 	}
 	c.userList = newU
-	if len(added)+len(deleted) != 0 {
+	if len(added)+len(deleted)+len(updated) != 0 {
 		log.WithField("tag", c.tag).
-			Infof("%d user deleted, %d user added", len(deleted), len(added))
+			Infof("%d user deleted, %d user added, %d user updated", len(deleted), len(added), len(updated))
 	}
 	return nil
 }

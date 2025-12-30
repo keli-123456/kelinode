@@ -53,13 +53,13 @@ func (v *V2Core) GetUserManager(tag string) (proxy.UserManager, error) {
 
 func (vc *V2Core) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeInfo) error {
 	vc.access.Lock()
-	defer vc.access.Unlock()
-
-	if vc.dispatcher == nil {
+	dispatcherRef := vc.dispatcher
+	if dispatcherRef == nil {
+		vc.access.Unlock()
 		return fmt.Errorf("core is not ready")
 	}
-
 	userManager, err := vc.getUserManagerLocked(tag)
+	vc.access.Unlock()
 	if err != nil {
 		return fmt.Errorf("get user manager error: %s", err)
 	}
@@ -76,14 +76,14 @@ func (vc *V2Core) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeInfo
 		delete(vc.users.uidMap, user)
 		vc.users.mapLock.Unlock()
 
-		if v, ok := vc.dispatcher.Counter.Load(tag); ok {
+		if v, ok := dispatcherRef.Counter.Load(tag); ok {
 			tc := v.(*counter.TrafficCounter)
 			tc.Delete(user)
 		}
-		if v, ok := vc.dispatcher.LinkManagers.Load(user); ok {
+		if v, ok := dispatcherRef.LinkManagers.Load(user); ok {
 			lm := v.(*dispatcher.LinkManager)
 			lm.CloseAll()
-			vc.dispatcher.LinkManagers.Delete(user)
+			dispatcherRef.LinkManagers.Delete(user)
 		}
 	}
 	return nil
@@ -91,16 +91,16 @@ func (vc *V2Core) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeInfo
 
 func (vc *V2Core) GetUserTrafficSlice(tag string, mintraffic int) ([]panel.UserTraffic, error) {
 	vc.access.Lock()
-	defer vc.access.Unlock()
-
-	if vc.dispatcher == nil {
+	dispatcherRef := vc.dispatcher
+	vc.access.Unlock()
+	if dispatcherRef == nil {
 		return nil, nil
 	}
 
 	trafficSlice := make([]panel.UserTraffic, 0)
 	vc.users.mapLock.RLock()
 	defer vc.users.mapLock.RUnlock()
-	if v, ok := vc.dispatcher.Counter.Load(tag); ok {
+	if v, ok := dispatcherRef.Counter.Load(tag); ok {
 		c := v.(*counter.TrafficCounter)
 		c.Counters.Range(func(key, value interface{}) bool {
 			email := key.(string)
@@ -132,9 +132,8 @@ func (vc *V2Core) GetUserTrafficSlice(tag string, mintraffic int) ([]panel.UserT
 
 func (v *V2Core) AddUsers(p *AddUsersParams) (added int, err error) {
 	v.access.Lock()
-	defer v.access.Unlock()
-
 	man, err := v.getUserManagerLocked(p.Tag)
+	v.access.Unlock()
 	if err != nil {
 		return 0, fmt.Errorf("get user manager error: %s", err)
 	}
@@ -180,6 +179,18 @@ func (v *V2Core) AddUsers(p *AddUsersParams) (added int, err error) {
 		}
 	}
 	return len(users), nil
+}
+
+func (v *V2Core) UpdateUserIDs(tag string, users []panel.UserInfo) error {
+	if v.users == nil {
+		return fmt.Errorf("core is not ready")
+	}
+	v.users.mapLock.Lock()
+	defer v.users.mapLock.Unlock()
+	for i := range users {
+		v.users.uidMap[format.UserTag(tag, users[i].Uuid)] = users[i].Id
+	}
+	return nil
 }
 
 func buildVmessUsers(tag string, userInfo []panel.UserInfo) (users []*protocol.User) {

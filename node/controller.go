@@ -14,17 +14,18 @@ import (
 )
 
 type Controller struct {
-	server                  *core.V2Core
-	apiClient               *panel.Client
-	tag                     string
-	limiter                 *limiter.Limiter
-	userList                []panel.UserInfo
-	aliveMap                map[int]int
-	conf                    *conf.NodeConfig
-	info                    *panel.NodeInfo
-	nodeInfoMonitorPeriodic *task.Task
-	userReportPeriodic      *task.Task
-	renewCertPeriodic       *task.Task
+	server                    *core.V2Core
+	apiClient                 *panel.Client
+	tag                       string
+	limiter                   *limiter.Limiter
+	userList                  []panel.UserInfo
+	aliveMap                  map[int]int
+	conf                      *conf.NodeConfig
+	info                      *panel.NodeInfo
+	nodeConfigMonitorPeriodic *task.Task
+	nodeUserMonitorPeriodic   *task.Task
+	userReportPeriodic        *task.Task
+	renewCertPeriodic         *task.Task
 }
 
 // NewController return a Node controller with default parameters.
@@ -96,8 +97,11 @@ func (c *Controller) Start(x *core.V2Core) error {
 // Close implement the Close() function of the service interface
 func (c *Controller) Close() error {
 	limiter.DeleteLimiter(c.tag)
-	if c.nodeInfoMonitorPeriodic != nil {
-		c.nodeInfoMonitorPeriodic.Close()
+	if c.nodeConfigMonitorPeriodic != nil {
+		c.nodeConfigMonitorPeriodic.Close()
+	}
+	if c.nodeUserMonitorPeriodic != nil {
+		c.nodeUserMonitorPeriodic.Close()
 	}
 	if c.userReportPeriodic != nil {
 		c.userReportPeriodic.Close()

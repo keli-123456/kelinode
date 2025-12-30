@@ -18,6 +18,10 @@ type Task struct {
 	Access    sync.RWMutex
 	Running   bool
 	Stop      chan struct{}
+
+	baseCtx       context.Context
+	baseCancel    context.CancelFunc
+	execStartedAt time.Time
 }
 
 func (t *Task) Start(first bool) error {
@@ -28,6 +32,8 @@ func (t *Task) Start(first bool) error {
 	}
 	t.Running = true
 	t.Stop = make(chan struct{})
+	t.baseCtx, t.baseCancel = context.WithCancel(context.Background())
+	t.execStartedAt = time.Time{}
 	t.Access.Unlock()
 
 	go func() {
@@ -46,14 +52,32 @@ func (t *Task) Start(first bool) error {
 			select {
 			case <-execToken:
 				go func() {
-					defer func() { execToken <- struct{}{} }()
+					t.Access.Lock()
+					t.execStartedAt = time.Now()
+					t.Access.Unlock()
+
+					defer func() {
+						t.Access.Lock()
+						t.execStartedAt = time.Time{}
+						t.Access.Unlock()
+						execToken <- struct{}{}
+					}()
+
 					if err := t.ExecuteWithTimeout(); err != nil {
 						log.Errorf("Task %s execution error: %v", t.Name, err)
 						t.safeStop()
 					}
 				}()
 			default:
-				log.Warnf("Task %s previous execution still running, skip", t.Name)
+				t.Access.RLock()
+				startedAt := t.execStartedAt
+				t.Access.RUnlock()
+				if startedAt.IsZero() {
+					log.Warnf("Task %s previous execution still running, skip", t.Name)
+					return
+				}
+				elapsed := time.Since(startedAt).Truncate(time.Second)
+				log.Warnf("Task %s previous execution still running (%s), skip", t.Name, elapsed)
 			}
 		}
 
@@ -83,7 +107,14 @@ func (t *Task) ExecuteWithTimeout() error {
 		timeout = min(3*t.Interval, 5*time.Minute)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	t.Access.RLock()
+	baseCtx := t.baseCtx
+	t.Access.RUnlock()
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+
+	ctx, cancel := context.WithTimeout(baseCtx, timeout)
 	defer cancel()
 
 	err := t.Execute(ctx)
@@ -91,6 +122,9 @@ func (t *Task) ExecuteWithTimeout() error {
 		return nil
 	}
 
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return nil
+	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		log.WithField("timeout", timeout).Errorf("Task %s execution timed out", t.Name)
 		if t.OnTimeout != nil {
@@ -106,6 +140,11 @@ func (t *Task) safeStop() {
 	t.Access.Lock()
 	if t.Running {
 		t.Running = false
+		if t.baseCancel != nil {
+			t.baseCancel()
+			t.baseCancel = nil
+			t.baseCtx = nil
+		}
 		close(t.Stop)
 	}
 	t.Access.Unlock()

@@ -2,7 +2,6 @@ package node
 
 import (
 	"context"
-	"strconv"
 
 	panel "github.com/keli-123456/kelinode/api/v2board"
 	log "github.com/sirupsen/logrus"
@@ -72,25 +71,27 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 	return nil
 }
 
-func compareUserList(old, new []panel.UserInfo) (deleted, added []panel.UserInfo) {
-	oldMap := make(map[string]int)
-	for i, user := range old {
-		key := user.Uuid + strconv.Itoa(user.SpeedLimit)
-		oldMap[key] = i
+func compareUserList(old, new []panel.UserInfo) (deleted, added, updated []panel.UserInfo) {
+	oldMap := make(map[string]panel.UserInfo, len(old))
+	for _, user := range old {
+		oldMap[user.Uuid] = user
 	}
 
 	for _, user := range new {
-		key := user.Uuid + strconv.Itoa(user.SpeedLimit)
-		if _, exists := oldMap[key]; !exists {
+		oldUser, exists := oldMap[user.Uuid]
+		if !exists {
 			added = append(added, user)
-		} else {
-			delete(oldMap, key)
+			continue
 		}
+		if oldUser.Id != user.Id || oldUser.SpeedLimit != user.SpeedLimit || oldUser.DeviceLimit != user.DeviceLimit {
+			updated = append(updated, user)
+		}
+		delete(oldMap, user.Uuid)
 	}
 
-	for _, index := range oldMap {
-		deleted = append(deleted, old[index])
+	for _, user := range oldMap {
+		deleted = append(deleted, user)
 	}
 
-	return deleted, added
+	return deleted, added, updated
 }

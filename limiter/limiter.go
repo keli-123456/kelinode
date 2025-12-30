@@ -110,6 +110,30 @@ func (l *Limiter) UpdateUser(tag string, added []panel.UserInfo, deleted []panel
 	}
 }
 
+func (l *Limiter) UpdateUserInfo(tag string, updated []panel.UserInfo) {
+	for i := range updated {
+		key := format.UserTag(tag, updated[i].Uuid)
+		if v, ok := l.UserLimitInfo.Load(key); ok {
+			info := v.(*UserLimitInfo)
+			info.UID = updated[i].Id
+			info.SpeedLimit = updated[i].SpeedLimit
+			info.DeviceLimit = updated[i].DeviceLimit
+			info.OverLimit = false
+		} else {
+			userLimit := &UserLimitInfo{
+				UID:         updated[i].Id,
+				SpeedLimit:  updated[i].SpeedLimit,
+				DeviceLimit: updated[i].DeviceLimit,
+				OverLimit:   false,
+			}
+			l.UserLimitInfo.Store(key, userLimit)
+		}
+		l.UUIDtoUID[updated[i].Uuid] = updated[i].Id
+		// Ensure new speed limits take effect on next connections.
+		l.SpeedLimiter.Delete(key)
+	}
+}
+
 func (l *Limiter) UpdateDynamicSpeedLimit(tag, uuid string, limit int, expire time.Time) error {
 	if v, ok := l.UserLimitInfo.Load(format.UserTag(tag, uuid)); ok {
 		info := v.(*UserLimitInfo)
