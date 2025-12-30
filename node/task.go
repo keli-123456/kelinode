@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
+	panel "github.com/keli-123456/kelinode/api/v2board"
+	"github.com/keli-123456/kelinode/common/task"
+	vCore "github.com/keli-123456/kelinode/core"
 	log "github.com/sirupsen/logrus"
-	panel "github.com/wyx2685/v2node/api/v2board"
-	"github.com/wyx2685/v2node/common/task"
-	vCore "github.com/wyx2685/v2node/core"
 )
 
 func (c *Controller) startTasks(node *panel.NodeInfo) {

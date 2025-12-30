@@ -1,4 +1,4 @@
-module github.com/wyx2685/v2node
+module github.com/keli-123456/kelinode
 
 go 1.25
 

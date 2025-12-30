@@ -4,8 +4,8 @@ import (
 	"context"
 	"strconv"
 
+	panel "github.com/keli-123456/kelinode/api/v2board"
 	log "github.com/sirupsen/logrus"
-	panel "github.com/wyx2685/v2node/api/v2board"
 )
 
 func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {

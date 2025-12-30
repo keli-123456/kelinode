@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/juju/ratelimit"
-	panel "github.com/wyx2685/v2node/api/v2board"
-	"github.com/wyx2685/v2node/common/format"
+	panel "github.com/keli-123456/kelinode/api/v2board"
+	"github.com/keli-123456/kelinode/common/format"
 )
 
 var limitLock sync.RWMutex

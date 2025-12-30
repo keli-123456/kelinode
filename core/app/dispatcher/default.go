@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wyx2685/v2node/common/counter"
-	"github.com/wyx2685/v2node/common/rate"
-	"github.com/wyx2685/v2node/limiter"
+	"github.com/keli-123456/kelinode/common/counter"
+	"github.com/keli-123456/kelinode/common/rate"
+	"github.com/keli-123456/kelinode/limiter"
 
 	"github.com/xtls/xray-core/app/dispatcher"
 	"github.com/xtls/xray-core/common"
