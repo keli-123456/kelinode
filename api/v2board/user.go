@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -40,16 +41,22 @@ func (c *Client) GetUserList(ctx context.Context) ([]UserInfo, error) {
 		SetHeader("X-Response-Format", "msgpack").
 		SetDoNotParseResponse(true).
 		Get(path)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil, nil
+		}
+		return nil, err
+	}
 	if r == nil || r.RawResponse == nil {
 		return nil, fmt.Errorf("received nil response or raw response")
 	}
 	defer r.RawResponse.Body.Close()
 
 	if r.StatusCode() == 304 {
+		if etag := r.Header().Get("ETag"); etag != "" {
+			c.userEtag = etag
+		}
 		return nil, nil
-	}
-	if err != nil {
-		return nil, err
 	}
 	userlist := &UserListBody{}
 	if strings.Contains(r.Header().Get("Content-Type"), "application/x-msgpack") {
@@ -132,6 +139,9 @@ func (c *Client) ReportUserTraffic(ctx context.Context, userTraffic []UserTraffi
 		ForceContentType("application/json").
 		Post(path)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
 		return err
 	}
 	if r != nil && r.StatusCode() >= 400 {
@@ -149,6 +159,9 @@ func (c *Client) ReportNodeOnlineUsers(ctx context.Context, data *map[int][]stri
 		Post(path)
 
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
 		return err
 	}
 	if r != nil && r.StatusCode() >= 400 {

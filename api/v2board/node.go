@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -121,6 +122,9 @@ func (c *Client) GetNodeInfo(ctx context.Context) (node *NodeInfo, err error) {
 		Get(path)
 
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	if r == nil {

@@ -1,11 +1,8 @@
 package panel
 
 import (
-	"errors"
 	"strconv"
 	"time"
-
-	"github.com/sirupsen/logrus"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/keli-123456/kelinode/conf"
@@ -27,20 +24,13 @@ type Client struct {
 
 func New(c *conf.NodeConfig) (*Client, error) {
 	client := resty.New()
+	client.SetLogger(&silentRestyLogger{})
 	client.SetRetryCount(3)
 	if c.Timeout > 0 {
 		client.SetTimeout(time.Duration(c.Timeout) * time.Second)
 	} else {
 		client.SetTimeout(30 * time.Second)
 	}
-	client.OnError(func(req *resty.Request, err error) {
-		var v *resty.ResponseError
-		if errors.As(err, &v) {
-			// v.Response contains the last response from the server
-			// v.Err contains the original error
-			logrus.Error(v.Err)
-		}
-	})
 	client.SetBaseURL(c.APIHost)
 	// set params
 	client.SetQueryParams(map[string]string{
