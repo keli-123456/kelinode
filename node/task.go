@@ -141,8 +141,11 @@ func (c *Controller) nodeUserMonitor(ctx context.Context) (err error) {
 	}
 	if len(deleted) > 0 {
 		// have deleted users
-		err = c.server.DelUsers(deleted, c.tag, c.info)
+		err = c.server.DelUsers(ctx, deleted, c.tag)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
 			log.WithFields(log.Fields{
 				"tag": c.tag,
 				"err": err,
@@ -152,12 +155,15 @@ func (c *Controller) nodeUserMonitor(ctx context.Context) (err error) {
 	}
 	if len(added) > 0 {
 		// have added users
-		_, err = c.server.AddUsers(&vCore.AddUsersParams{
+		_, err = c.server.AddUsersWithContext(ctx, &vCore.AddUsersParams{
 			Tag:      c.tag,
 			NodeInfo: c.info,
 			Users:    added,
 		})
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
 			log.WithFields(log.Fields{
 				"tag": c.tag,
 				"err": err,

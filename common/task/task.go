@@ -71,13 +71,22 @@ func (t *Task) Start(first bool) error {
 			default:
 				t.Access.RLock()
 				startedAt := t.execStartedAt
+				timeout := t.Timeout
+				interval := t.Interval
 				t.Access.RUnlock()
 				if startedAt.IsZero() {
-					log.Warnf("Task %s previous execution still running, skip", t.Name)
+					log.Debugf("Task %s previous execution still running, skip", t.Name)
 					return
 				}
 				elapsed := time.Since(startedAt).Truncate(time.Second)
-				log.Warnf("Task %s previous execution still running (%s), skip", t.Name, elapsed)
+				if timeout <= 0 {
+					timeout = min(3*interval, 5*time.Minute)
+				}
+				if elapsed > timeout {
+					log.Warnf("Task %s previous execution still running (%s), skip", t.Name, elapsed)
+					return
+				}
+				log.Debugf("Task %s previous execution still running (%s), skip", t.Name, elapsed)
 			}
 		}
 

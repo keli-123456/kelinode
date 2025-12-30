@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -51,7 +52,7 @@ func (v *V2Core) GetUserManager(tag string) (proxy.UserManager, error) {
 	return v.getUserManagerLocked(tag)
 }
 
-func (vc *V2Core) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeInfo) error {
+func (vc *V2Core) DelUsers(ctx context.Context, users []panel.UserInfo, tag string) error {
 	vc.access.Lock()
 	dispatcherRef := vc.dispatcher
 	if dispatcherRef == nil {
@@ -64,11 +65,18 @@ func (vc *V2Core) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeInfo
 		return fmt.Errorf("get user manager error: %s", err)
 	}
 	for i := range users {
+		if ctx != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
 		user := format.UserTag(tag, users[i].Uuid)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		err = userManager.RemoveUser(ctx, user)
+		reqCtx := ctx
+		if reqCtx == nil {
+			reqCtx = context.Background()
+		}
+		perUserCtx, cancel := context.WithTimeout(reqCtx, 30*time.Second)
+		err = userManager.RemoveUser(perUserCtx, user)
 		cancel()
-		if err != nil {
+		if err != nil && !isBenignRemoveUserError(err) {
 			return err
 		}
 
@@ -131,6 +139,10 @@ func (vc *V2Core) GetUserTrafficSlice(tag string, mintraffic int) ([]panel.UserT
 }
 
 func (v *V2Core) AddUsers(p *AddUsersParams) (added int, err error) {
+	return v.AddUsersWithContext(context.Background(), p)
+}
+
+func (v *V2Core) AddUsersWithContext(ctx context.Context, p *AddUsersParams) (added int, err error) {
 	v.access.Lock()
 	man, err := v.getUserManagerLocked(p.Tag)
 	v.access.Unlock()
@@ -167,18 +179,26 @@ func (v *V2Core) AddUsers(p *AddUsersParams) (added int, err error) {
 		return 0, fmt.Errorf("unsupported node type: %s", p.NodeInfo.Type)
 	}
 	for _, u := range users {
+		if ctx != nil && ctx.Err() != nil {
+			return added, ctx.Err()
+		}
 		mUser, err := u.ToMemoryUser()
 		if err != nil {
 			return 0, err
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		err = man.AddUser(ctx, mUser)
-		cancel()
-		if err != nil {
-			return 0, err
+		reqCtx := ctx
+		if reqCtx == nil {
+			reqCtx = context.Background()
 		}
+		perUserCtx, cancel := context.WithTimeout(reqCtx, 30*time.Second)
+		err = man.AddUser(perUserCtx, mUser)
+		cancel()
+		if err != nil && !isBenignAddUserError(err) {
+			return added, err
+		}
+		added++
 	}
-	return len(users), nil
+	return added, nil
 }
 
 func (v *V2Core) UpdateUserIDs(tag string, users []panel.UserInfo) error {
@@ -191,6 +211,28 @@ func (v *V2Core) UpdateUserIDs(tag string, users []panel.UserInfo) error {
 		v.users.uidMap[format.UserTag(tag, users[i].Uuid)] = users[i].Id
 	}
 	return nil
+}
+
+func isBenignAddUserError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "already exists")
+}
+
+func isBenignRemoveUserError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "not found")
 }
 
 func buildVmessUsers(tag string, userInfo []panel.UserInfo) (users []*protocol.User) {
