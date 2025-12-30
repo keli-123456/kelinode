@@ -39,10 +39,20 @@ func (m *LinkManager) RemoveWriter(writer *ManagedWriter) {
 }
 
 func (m *LinkManager) CloseAll() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for w, r := range m.links {
-		common.Close(w)
-		common.Interrupt(r)
+	for {
+		m.mu.Lock()
+		if len(m.links) == 0 {
+			m.mu.Unlock()
+			return
+		}
+
+		links := m.links
+		m.links = make(map[*ManagedWriter]buf.Reader)
+		m.mu.Unlock()
+
+		for w, r := range links {
+			common.Close(w)
+			common.Interrupt(r)
+		}
 	}
 }
