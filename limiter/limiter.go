@@ -173,52 +173,67 @@ func (l *Limiter) CheckLimit(taguuid string, ip string, isTcp bool, noSSUDP bool
 		return nil, true
 	}
 	if noSSUDP {
-		// Store online user for device limit
-		newipMap := new(sync.Map)
-		newipMap.Store(ip, uid)
 		aliveIp := l.AliveList[uid]
-		// If any device is online
-		if v, loaded := l.UserOnlineIP.LoadOrStore(taguuid, newipMap); loaded {
-			oldipMap := v.(*sync.Map)
-			// If this is a new ip
-			if _, loaded := oldipMap.LoadOrStore(ip, uid); !loaded {
-				if v, loaded := l.OldUserOnline.Load(ip); loaded {
+
+		// Fast path: most of the time a user already has an ipMap.
+		// Avoid allocating a new sync.Map on every connection.
+		if v, ok := l.UserOnlineIP.Load(taguuid); ok {
+			ipMap := v.(*sync.Map)
+			if _, loaded := ipMap.LoadOrStore(ip, uid); !loaded {
+				if v, ok := l.OldUserOnline.Load(ip); ok {
 					if v.(int) == uid {
 						l.OldUserOnline.Delete(ip)
 					}
-				} else if deviceLimit > 0 {
-					if deviceLimit <= aliveIp {
-						oldipMap.Delete(ip)
+				} else if deviceLimit > 0 && deviceLimit <= aliveIp {
+					ipMap.Delete(ip)
+					return nil, true
+				}
+			}
+		} else {
+			// Store online user for device limit / online reporting.
+			newipMap := new(sync.Map)
+			newipMap.Store(ip, uid)
+
+			// If any device is online
+			if v, loaded := l.UserOnlineIP.LoadOrStore(taguuid, newipMap); loaded {
+				ipMap := v.(*sync.Map)
+				// If this is a new ip
+				if _, loaded := ipMap.LoadOrStore(ip, uid); !loaded {
+					if v, ok := l.OldUserOnline.Load(ip); ok {
+						if v.(int) == uid {
+							l.OldUserOnline.Delete(ip)
+						}
+					} else if deviceLimit > 0 && deviceLimit <= aliveIp {
+						ipMap.Delete(ip)
 						return nil, true
 					}
 				}
-			}
-		} else if v, ok := l.OldUserOnline.Load(ip); ok {
-			if v.(int) == uid {
-				l.OldUserOnline.Delete(ip)
-			}
-		} else {
-			if deviceLimit > 0 {
-				if deviceLimit <= aliveIp {
-					l.UserOnlineIP.Delete(taguuid)
-					return nil, true
+			} else if v, ok := l.OldUserOnline.Load(ip); ok {
+				if v.(int) == uid {
+					l.OldUserOnline.Delete(ip)
 				}
+			} else if deviceLimit > 0 && deviceLimit <= aliveIp {
+				l.UserOnlineIP.Delete(taguuid)
+				return nil, true
 			}
 		}
 	}
 
 	limit := int64(determineSpeedLimit(nodeLimit, userLimit)) * 1000000 / 8 // If you need the Speed limit
-	if limit > 0 {
-		Bucket = ratelimit.NewBucketWithQuantum(time.Second, limit, limit) // Byte/s
-		if v, ok := l.SpeedLimiter.LoadOrStore(taguuid, Bucket); ok {
-			return v.(*ratelimit.Bucket), false
-		} else {
-			l.SpeedLimiter.Store(taguuid, Bucket)
-			return Bucket, false
-		}
-	} else {
+	if limit <= 0 {
 		return nil, false
 	}
+
+	// Avoid allocating a new bucket on every connection.
+	if v, ok := l.SpeedLimiter.Load(taguuid); ok {
+		return v.(*ratelimit.Bucket), false
+	}
+
+	Bucket = ratelimit.NewBucketWithQuantum(time.Second, limit, limit) // Byte/s
+	if v, loaded := l.SpeedLimiter.LoadOrStore(taguuid, Bucket); loaded {
+		return v.(*ratelimit.Bucket), false
+	}
+	return Bucket, false
 }
 
 func (l *Limiter) GetOnlineDevice() (*[]panel.OnlineUser, error) {
