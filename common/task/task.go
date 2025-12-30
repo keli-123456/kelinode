@@ -143,7 +143,6 @@ func (t *Task) safeStop() {
 		if t.baseCancel != nil {
 			t.baseCancel()
 			t.baseCancel = nil
-			t.baseCtx = nil
 		}
 		close(t.Stop)
 	}
