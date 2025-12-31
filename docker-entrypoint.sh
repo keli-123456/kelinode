@@ -11,6 +11,9 @@ TIMEOUT_RAW="${V2NODE_TIMEOUT:-${TIMEOUT:-}}"
 # for large deployments; subsequent pulls usually hit ETag/304 and return quickly.
 TIMEOUT="${TIMEOUT_RAW:-30}"
 
+PPROF_PORT_RAW="${V2NODE_PPROF_PORT:-${PPROF_PORT:-}}"
+PPROF_PORT="${PPROF_PORT_RAW:-0}"
+
 LOG_LEVEL="${V2NODE_LOG_LEVEL:-info}"
 CORE_LOG_LEVEL="${V2NODE_CORE_LOG_LEVEL:-error}"
 
@@ -139,6 +142,7 @@ generate_config_from_env() {
 	mkdir -p "$(dirname "$CONFIG_PATH")"
 	cat >"$CONFIG_PATH" <<-EOF
 	{
+	  "PprofPort": ${PPROF_PORT},
 	  "Log": {
 	    "Level": "${LOG_LEVEL}",
 	    "CoreLevel": "${CORE_LOG_LEVEL}",
@@ -172,6 +176,12 @@ ensure_config_for_server() {
 		case "$TIMEOUT" in
 			*[!0-9]*|'')
 				echo "v2node: TIMEOUT must be an integer." >&2
+				exit 2
+				;;
+		esac
+		case "$PPROF_PORT" in
+			*[!0-9]*|'')
+				echo "v2node: PPROF_PORT must be an integer." >&2
 				exit 2
 				;;
 		esac
