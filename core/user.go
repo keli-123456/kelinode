@@ -97,15 +97,22 @@ func (vc *V2Core) DelUsers(ctx context.Context, users []panel.UserInfo, tag stri
 	return nil
 }
 
-func (vc *V2Core) GetUserTrafficSlice(tag string, mintraffic int) ([]panel.UserTraffic, error) {
+type trafficRollbackItem struct {
+	storage *counter.TrafficStorage
+	up      int64
+	down    int64
+}
+
+func (vc *V2Core) GetUserTrafficSlice(tag string, mintraffic int) ([]panel.UserTraffic, func(), error) {
 	vc.access.Lock()
 	dispatcherRef := vc.dispatcher
 	vc.access.Unlock()
 	if dispatcherRef == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	trafficSlice := make([]panel.UserTraffic, 0)
+	rollbackItems := make([]trafficRollbackItem, 0)
 	vc.users.mapLock.RLock()
 	defer vc.users.mapLock.RUnlock()
 	if v, ok := dispatcherRef.Counter.Load(tag); ok {
@@ -116,8 +123,8 @@ func (vc *V2Core) GetUserTrafficSlice(tag string, mintraffic int) ([]panel.UserT
 			up := traffic.UpCounter.Load()
 			down := traffic.DownCounter.Load()
 			if up+down > int64(mintraffic*1000) {
-				traffic.UpCounter.Store(0)
-				traffic.DownCounter.Store(0)
+				up = traffic.UpCounter.Swap(0)
+				down = traffic.DownCounter.Swap(0)
 				if vc.users.uidMap[email] == 0 {
 					c.Delete(email)
 					return true
@@ -127,15 +134,30 @@ func (vc *V2Core) GetUserTrafficSlice(tag string, mintraffic int) ([]panel.UserT
 					Upload:   up,
 					Download: down,
 				})
+				rollbackItems = append(rollbackItems, trafficRollbackItem{
+					storage: traffic,
+					up:      up,
+					down:    down,
+				})
 			}
 			return true
 		})
 		if len(trafficSlice) == 0 {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return trafficSlice, nil
+		return trafficSlice, func() {
+			for i := range rollbackItems {
+				item := rollbackItems[i]
+				if item.up != 0 {
+					item.storage.UpCounter.Add(item.up)
+				}
+				if item.down != 0 {
+					item.storage.DownCounter.Add(item.down)
+				}
+			}
+		}, nil
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 func (v *V2Core) AddUsers(p *AddUsersParams) (added int, err error) {

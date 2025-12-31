@@ -14,11 +14,14 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 		reportmin = c.info.Common.BaseConfig.NodeReportMinTraffic
 		devicemin = c.info.Common.BaseConfig.DeviceOnlineMinTraffic
 	}
-	userTraffic, _ := c.server.GetUserTrafficSlice(c.tag, reportmin)
+	userTraffic, rollbackUserTraffic, _ := c.server.GetUserTrafficSlice(c.tag, reportmin)
 	hadTraffic := len(userTraffic) > 0
 	if len(userTraffic) > 0 {
 		err = c.apiClient.ReportUserTraffic(ctx, userTraffic)
 		if err != nil {
+			if rollbackUserTraffic != nil {
+				rollbackUserTraffic()
+			}
 			log.WithFields(log.Fields{
 				"tag": c.tag,
 				"err": err,
