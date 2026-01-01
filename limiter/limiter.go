@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/ratelimit"
@@ -28,7 +29,7 @@ type Limiter struct {
 	UUIDtoUID     map[string]int // Key: UUID, value: Uid
 	UserLimitInfo *sync.Map      // Key: TagUUID value: UserLimitInfo
 	SpeedLimiter  *sync.Map      // key: TagUUID, value: *ratelimit.Bucket
-	AliveList     map[int]int    // Key: Uid, value: alive_ip
+	aliveList     atomic.Value   // map[int]int, Key: Uid, value: alive_ip (immutable snapshot)
 }
 
 type UserLimitInfo struct {
@@ -45,9 +46,9 @@ func AddLimiter(tag string, users []panel.UserInfo, aliveList map[int]int) *Limi
 		UserOnlineIP:  new(sync.Map),
 		UserLimitInfo: new(sync.Map),
 		SpeedLimiter:  new(sync.Map),
-		AliveList:     aliveList,
 		OldUserOnline: new(sync.Map),
 	}
+	info.SetAliveList(aliveList)
 	uuidmap := make(map[string]int)
 	for i := range users {
 		uuidmap[users[i].Uuid] = users[i].Id
@@ -69,6 +70,50 @@ func AddLimiter(tag string, users []panel.UserInfo, aliveList map[int]int) *Limi
 	return info
 }
 
+func (l *Limiter) SetAliveList(alive map[int]int) {
+	if alive == nil {
+		alive = make(map[int]int)
+	}
+	next := make(map[int]int, len(alive))
+	for k, v := range alive {
+		next[k] = v
+	}
+	l.aliveList.Store(next)
+}
+
+func (l *Limiter) getAliveIP(uid int) int {
+	if l == nil {
+		return 0
+	}
+	v := l.aliveList.Load()
+	if v == nil {
+		return 0
+	}
+	return v.(map[int]int)[uid]
+}
+
+func (l *Limiter) deleteAliveIDs(ids []int) {
+	if l == nil || len(ids) == 0 {
+		return
+	}
+	v := l.aliveList.Load()
+	if v == nil {
+		return
+	}
+	cur := v.(map[int]int)
+	if len(cur) == 0 {
+		return
+	}
+	next := make(map[int]int, len(cur))
+	for k, val := range cur {
+		next[k] = val
+	}
+	for _, id := range ids {
+		delete(next, id)
+	}
+	l.aliveList.Store(next)
+}
+
 func GetLimiter(tag string) (info *Limiter, err error) {
 	limitLock.RLock()
 	info, ok := limiter[tag]
@@ -86,13 +131,15 @@ func DeleteLimiter(tag string) {
 }
 
 func (l *Limiter) UpdateUser(tag string, added []panel.UserInfo, deleted []panel.UserInfo) {
+	deletedIDs := make([]int, 0, len(deleted))
 	for i := range deleted {
 		l.UserLimitInfo.Delete(format.UserTag(tag, deleted[i].Uuid))
 		l.UserOnlineIP.Delete(format.UserTag(tag, deleted[i].Uuid))
 		l.SpeedLimiter.Delete(format.UserTag(tag, deleted[i].Uuid))
 		delete(l.UUIDtoUID, deleted[i].Uuid)
-		delete(l.AliveList, deleted[i].Id)
+		deletedIDs = append(deletedIDs, deleted[i].Id)
 	}
+	l.deleteAliveIDs(deletedIDs)
 	for i := range added {
 		userLimit := &UserLimitInfo{
 			UID: added[i].Id,
@@ -173,7 +220,7 @@ func (l *Limiter) CheckLimit(taguuid string, ip string, isTcp bool, noSSUDP bool
 		return nil, true
 	}
 	if noSSUDP {
-		aliveIp := l.AliveList[uid]
+		aliveIp := l.getAliveIP(uid)
 
 		// Fast path: most of the time a user already has an ipMap.
 		// Avoid allocating a new sync.Map on every connection.

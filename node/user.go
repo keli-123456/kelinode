@@ -14,6 +14,23 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 		reportmin = c.info.Common.BaseConfig.NodeReportMinTraffic
 		devicemin = c.info.Common.BaseConfig.DeviceOnlineMinTraffic
 	}
+
+	// Decouple thresholds:
+	// - reportmin affects traffic reporting only
+	// - devicemin affects online user reporting only
+	var filterOnlineByTraffic = devicemin > 0
+	var onlineAllowedUID map[int]struct{}
+	if filterOnlineByTraffic {
+		onlineTraffic, rollbackOnlineTraffic, _ := c.server.GetUserTrafficSlice(c.tag, devicemin)
+		if rollbackOnlineTraffic != nil {
+			rollbackOnlineTraffic()
+		}
+		onlineAllowedUID = make(map[int]struct{}, len(onlineTraffic))
+		for _, t := range onlineTraffic {
+			onlineAllowedUID[t.UID] = struct{}{}
+		}
+	}
+
 	userTraffic, rollbackUserTraffic, _ := c.server.GetUserTrafficSlice(c.tag, reportmin)
 	hadTraffic := len(userTraffic) > 0
 	if len(userTraffic) > 0 {
@@ -40,17 +57,13 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 		}).Error("Get online device failed")
 	} else if onlineDevice != nil && len(*onlineDevice) > 0 {
 		var result []panel.OnlineUser
-		var nocountUID = make(map[int]struct{})
-		for _, traffic := range userTraffic {
-			total := traffic.Upload + traffic.Download
-			if total < int64(devicemin*1000) {
-				nocountUID[traffic.UID] = struct{}{}
-			}
-		}
 		for _, online := range *onlineDevice {
-			if _, ok := nocountUID[online.UID]; !ok {
-				result = append(result, online)
+			if filterOnlineByTraffic {
+				if _, ok := onlineAllowedUID[online.UID]; !ok {
+					continue
+				}
 			}
+			result = append(result, online)
 		}
 		data := make(map[int][]string)
 		for _, onlineuser := range result {

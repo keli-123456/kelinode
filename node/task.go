@@ -175,7 +175,7 @@ func (c *Controller) nodeUserMonitor(ctx context.Context) (err error) {
 
 	// update alive list
 	if newA != nil {
-		c.limiter.AliveList = newA
+		c.limiter.SetAliveList(newA)
 	}
 	if len(updated) > 0 {
 		c.limiter.UpdateUserInfo(c.tag, updated)
