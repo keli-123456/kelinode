@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/keli-123456/kelinode/common/file"
@@ -39,6 +40,24 @@ func (c *Controller) requestCert() error {
 		if cert.CertFile == "" || cert.KeyFile == "" {
 			return fmt.Errorf("cert file path or key file path not exist")
 		}
+		if file.IsExist(cert.CertFile) && file.IsExist(cert.KeyFile) {
+			return nil
+		}
+		// Some panels may mark "self-signed" as file mode without actually providing cert files.
+		// If cert paths are the default ones, auto-generate a self-signed certificate to avoid startup failure.
+		if c != nil && c.info != nil {
+			defaultCert := filepath.Join("/etc/v2node/", c.info.Type+strconv.Itoa(c.info.Id)+".cer")
+			defaultKey := filepath.Join("/etc/v2node/", c.info.Type+strconv.Itoa(c.info.Id)+".key")
+			if cert.CertFile == defaultCert && cert.KeyFile == defaultKey {
+				log.WithField("tag", c.tag).Warn("cert files not found in file mode, generating self-signed certificate")
+				err := generateSelfSslCertificate(cert.CertDomain, cert.CertFile, cert.KeyFile)
+				if err != nil {
+					return fmt.Errorf("generate self cert error: %s", err)
+				}
+				return nil
+			}
+		}
+		return fmt.Errorf("cert file or key file not exist: cert=%s key=%s", cert.CertFile, cert.KeyFile)
 	case "dns", "http":
 		if cert.CertFile == "" || cert.KeyFile == "" {
 			return fmt.Errorf("cert file path or key file path not exist")
@@ -75,6 +94,9 @@ func (c *Controller) requestCert() error {
 }
 
 func generateSelfSslCertificate(domain, certPath, keyPath string) error {
+	if domain == "" {
+		domain = "localhost"
+	}
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return err
