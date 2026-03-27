@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/keli-123456/kelinode/common/file"
+	"github.com/keli-123456/kelinode/conf"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -46,8 +47,12 @@ func (c *Controller) requestCert() error {
 		// Some panels may mark "self-signed" as file mode without actually providing cert files.
 		// If cert paths are the default ones, auto-generate a self-signed certificate to avoid startup failure.
 		if c != nil && c.info != nil {
-			defaultCert := filepath.Join("/etc/v2node/", c.info.Type+strconv.Itoa(c.info.Id)+".cer")
-			defaultKey := filepath.Join("/etc/v2node/", c.info.Type+strconv.Itoa(c.info.Id)+".key")
+			baseDir := "/etc/v2node"
+			if c.conf != nil {
+				baseDir = conf.NormalizeConfigDir(c.conf.ConfigDir)
+			}
+			defaultCert := filepath.Join(baseDir, c.info.Type+strconv.Itoa(c.info.Id)+".cer")
+			defaultKey := filepath.Join(baseDir, c.info.Type+strconv.Itoa(c.info.Id)+".key")
 			if cert.CertFile == defaultCert && cert.KeyFile == defaultKey {
 				log.WithField("tag", c.tag).Warn("cert files not found in file mode, generating self-signed certificate")
 				err := generateSelfSslCertificate(cert.CertDomain, cert.CertFile, cert.KeyFile)

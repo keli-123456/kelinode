@@ -3,9 +3,12 @@ package conf
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/viper"
 )
+
+const DefaultNodeConfigDir = "/etc/v2node"
 
 type Conf struct {
 	LogConfig      LogConfig      `mapstructure:"Log"`
@@ -29,10 +32,11 @@ type LogConfig struct {
 }
 
 type NodeConfig struct {
-	APIHost string `mapstructure:"ApiHost"`
-	NodeID  int    `mapstructure:"NodeID"`
-	Key     string `mapstructure:"ApiKey"`
-	Timeout int    `mapstructure:"Timeout"`
+	APIHost   string `mapstructure:"ApiHost"`
+	NodeID    int    `mapstructure:"NodeID"`
+	Key       string `mapstructure:"ApiKey"`
+	Timeout   int    `mapstructure:"Timeout"`
+	ConfigDir string `mapstructure:"ConfigDir"`
 }
 
 type RealtimeConfig struct {
@@ -74,8 +78,55 @@ func (p *Conf) LoadFromPath(filePath string) error {
 	if err := v.ReadInConfig(); err != nil {
 		return fmt.Errorf("read config file error: %s", err)
 	}
+	if isConfigV2(v) {
+		if err := p.loadFromV2(v); err != nil {
+			return err
+		}
+		normalizeNodeConfigs(p.NodeConfigs)
+		return nil
+	}
 	if err := v.Unmarshal(p); err != nil {
 		return fmt.Errorf("unmarshal config error: %s", err)
 	}
+	normalizeNodeConfigs(p.NodeConfigs)
 	return nil
+}
+
+func ResolveConfigPath(filePath string) string {
+	if filePath == "" {
+		return filePath
+	}
+	if _, err := os.Stat(filePath); err == nil {
+		return filePath
+	}
+
+	ext := filepath.Ext(filePath)
+	base := filePath[:len(filePath)-len(ext)]
+	switch ext {
+	case ".json":
+		for _, candidate := range []string{base + ".yml", base + ".yaml"} {
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate
+			}
+		}
+	case ".yml", ".yaml":
+		candidate := base + ".json"
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return filePath
+}
+
+func normalizeNodeConfigs(nodes []NodeConfig) {
+	for i := range nodes {
+		nodes[i].ConfigDir = NormalizeConfigDir(nodes[i].ConfigDir)
+	}
+}
+
+func NormalizeConfigDir(path string) string {
+	if path == "" {
+		return DefaultNodeConfigDir
+	}
+	return filepath.Clean(path)
 }

@@ -42,9 +42,10 @@ func init() {
 
 func serverHandle(_ *cobra.Command, _ []string) {
 	showVersion()
+	configPath := conf.ResolveConfigPath(config)
 	c := conf.New()
-	err := c.LoadFromPath(config)
-	health := newHealthState(config)
+	err := c.LoadFromPath(configPath)
+	health := newHealthState(configPath)
 	runtimeState := &runtimeTuningState{}
 	log.SetFormatter(&log.TextFormatter{
 		FullTimestamp:   true,
@@ -113,7 +114,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	log.Info("Nodes started")
 	if watch {
 		// On file change, just signal reload; do not run reload concurrently here
-		err = c.Watch(config, func() {
+		err = c.Watch(configPath, func() {
 			select {
 			case reloadCh <- struct{}{}:
 			default: // drop if a reload is already queued
@@ -138,7 +139,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		case <-reloadCh:
 			log.Info("收到重启信号，正在重新加载配置...")
 			health.MarkReady(false)
-			if err := reload(config, &nodes, &v2core, health, runtimeState); err != nil {
+			if err := reload(configPath, &nodes, &v2core, health, runtimeState); err != nil {
 				log.WithField("err", err).Panic("重启失败")
 			}
 			health.MarkReady(true)

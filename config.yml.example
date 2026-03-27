@@ -1,0 +1,32 @@
+panel:
+  url: "https://panel.example.com"
+  token: "your-server-token"
+  node_id: 1
+  timeout: 15
+
+kernel:
+  config_dir: "/etc/v2node"
+  log_level: "error"
+
+log:
+  level: "info"
+  output: "stdout"
+  access: "none"
+
+runtime:
+  gomemlimit: "512MiB"
+  gogc: 100
+
+health_port: 65530
+pprof_port: 0
+
+realtime:
+  enabled: true
+  ping_interval: 30
+  reconnect_interval: 5
+
+# Multi-node example:
+# nodes:
+#   - node_id: 1
+#   - node_id: 2
+#     config_dir: "/etc/v2node/node-2"

@@ -15,6 +15,7 @@ type Client struct {
 	APIHost          string
 	Token            string
 	NodeId           int
+	ConfigDir        string
 	nodeEtag         string
 	userEtag         string
 	responseBodyHash string
@@ -39,11 +40,12 @@ func New(c *conf.NodeConfig) (*Client, error) {
 		"token":     c.Key,
 	})
 	return &Client{
-		client:   client,
-		Token:    c.Key,
-		APIHost:  c.APIHost,
-		NodeId:   c.NodeID,
-		UserList: &UserListBody{},
-		AliveMap: &AliveMap{},
+		client:    client,
+		Token:     c.Key,
+		APIHost:   c.APIHost,
+		NodeId:    c.NodeID,
+		ConfigDir: c.ConfigDir,
+		UserList:  &UserListBody{},
+		AliveMap:  &AliveMap{},
 	}, nil
 }

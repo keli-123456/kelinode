@@ -18,3 +18,4 @@ new.sh
 quick_update.sh
 .go/
 .gocache/
+.gomodcache/

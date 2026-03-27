@@ -241,7 +241,8 @@ generate_v2node_config() {
             "ApiHost": "${api_host}",
             "NodeID": ${node_id},
             "ApiKey": "${api_key}",
-            "Timeout": 15
+            "Timeout": 15,
+            "ConfigDir": "/etc/v2node"
         }
     ]
 }
@@ -352,7 +353,7 @@ EOF
         echo -e "${green}v2node ${last_version}${plain} 安装完成，已设置开机自启"
     fi
 
-    if [[ ! -f /etc/v2node/config.json ]]; then
+    if [[ ! -f /etc/v2node/config.json && ! -f /etc/v2node/config.yml && ! -f /etc/v2node/config.yaml ]]; then
         # 如果通过 CLI 传入了完整参数，则直接生成配置并跳过交互
         if [[ -n "$API_HOST_ARG" && -n "$NODE_ID_ARG" && -n "$API_KEY_ARG" ]]; then
             generate_v2node_config "$API_HOST_ARG" "$NODE_ID_ARG" "$API_KEY_ARG"

@@ -2,10 +2,18 @@
 set -eu
 
 CONFIG_PATH="${V2NODE_CONFIG_PATH:-/etc/v2node/config.json}"
+if [ "$CONFIG_PATH" = "/etc/v2node/config.json" ] && [ ! -f "$CONFIG_PATH" ]; then
+	if [ -f /etc/v2node/config.yml ]; then
+		CONFIG_PATH="/etc/v2node/config.yml"
+	elif [ -f /etc/v2node/config.yaml ]; then
+		CONFIG_PATH="/etc/v2node/config.yaml"
+	fi
+fi
 
 API_HOST="${V2NODE_API_HOST:-${API_HOST:-}}"
 NODE_ID="${V2NODE_NODE_ID:-${NODE_ID:-}}"
 API_KEY="${V2NODE_API_KEY:-${API_KEY:-}}"
+NODE_CONFIG_DIR="${V2NODE_NODE_CONFIG_DIR:-${V2NODE_CONFIG_DIR:-}}"
 TIMEOUT_RAW="${V2NODE_TIMEOUT:-${TIMEOUT:-}}"
 # Panel API timeout (seconds). Needs to be long enough to download the initial full user list
 # for large deployments; subsequent pulls usually hit ETag/304 and return quickly.
@@ -35,10 +43,72 @@ json_escape() {
 
 load_panel_env_from_config() {
 	if [ -z "$API_HOST" ] || [ -z "$NODE_ID" ] || [ -z "$API_KEY" ]; then
-		if command -v jq >/dev/null 2>&1; then
+		if command -v jq >/dev/null 2>&1 && printf '%s' "$CONFIG_PATH" | grep -Eq '\.json$'; then
 			API_HOST="${API_HOST:-$(jq -r '.Nodes[0].ApiHost // empty' "$CONFIG_PATH" 2>/dev/null || true)}"
 			NODE_ID="${NODE_ID:-$(jq -r '.Nodes[0].NodeID // empty' "$CONFIG_PATH" 2>/dev/null || true)}"
 			API_KEY="${API_KEY:-$(jq -r '.Nodes[0].ApiKey // empty' "$CONFIG_PATH" 2>/dev/null || true)}"
+		elif [ -f "$CONFIG_PATH" ]; then
+			panel_values="$(awk '
+				function trim(s) {
+					sub(/^[[:space:]]+/, "", s)
+					sub(/[[:space:]]+$/, "", s)
+					gsub(/^"/, "", s)
+					gsub(/"$/, "", s)
+					return s
+				}
+				/^[[:space:]]*#/ { next }
+				/^[^[:space:]-][^:]*:/ {
+					name=$0
+					sub(/:.*/, "", name)
+					section=trim(name)
+				}
+				section=="panel" {
+					if ($0 ~ /^[[:space:]]+url:[[:space:]]*/ && panel_url == "") {
+						value=$0
+						sub(/^[^:]*:[[:space:]]*/, "", value)
+						panel_url=trim(value)
+					}
+					if ($0 ~ /^[[:space:]]+token:[[:space:]]*/ && panel_token == "") {
+						value=$0
+						sub(/^[^:]*:[[:space:]]*/, "", value)
+						panel_token=trim(value)
+					}
+					if ($0 ~ /^[[:space:]]+node_id:[[:space:]]*/ && panel_node_id == "") {
+						value=$0
+						sub(/^[^:]*:[[:space:]]*/, "", value)
+						panel_node_id=trim(value)
+					}
+				}
+				section=="nodes" {
+					if ($0 ~ /^[[:space:]]*-[[:space:]]*node_id:[[:space:]]*/ && first_node_id == "") {
+						value=$0
+						sub(/.*node_id:[[:space:]]*/, "", value)
+						first_node_id=trim(value)
+					}
+					if ($0 ~ /^[[:space:]]+url:[[:space:]]*/ && node_url == "") {
+						value=$0
+						sub(/^[^:]*:[[:space:]]*/, "", value)
+						node_url=trim(value)
+					}
+					if ($0 ~ /^[[:space:]]+token:[[:space:]]*/ && node_token == "") {
+						value=$0
+						sub(/^[^:]*:[[:space:]]*/, "", value)
+						node_token=trim(value)
+					}
+				}
+				END {
+					printf "%s|%s|%s|%s|%s|%s\n", panel_url, panel_token, panel_node_id, first_node_id, node_url, node_token
+				}
+			' "$CONFIG_PATH")"
+			panel_url="$(printf '%s' "$panel_values" | cut -d'|' -f1)"
+			panel_token="$(printf '%s' "$panel_values" | cut -d'|' -f2)"
+			panel_node_id="$(printf '%s' "$panel_values" | cut -d'|' -f3)"
+			first_node_id="$(printf '%s' "$panel_values" | cut -d'|' -f4)"
+			first_node_url="$(printf '%s' "$panel_values" | cut -d'|' -f5)"
+			first_node_token="$(printf '%s' "$panel_values" | cut -d'|' -f6)"
+			API_HOST="${API_HOST:-${panel_url:-$first_node_url}}"
+			API_KEY="${API_KEY:-${panel_token:-$first_node_token}}"
+			NODE_ID="${NODE_ID:-${panel_node_id:-$first_node_id}}"
 		fi
 	fi
 }
@@ -76,7 +146,7 @@ maybe_download_tls_files() {
 
 	load_panel_env_from_config
 	if [ -z "$API_HOST" ] || [ -z "$NODE_ID" ] || [ -z "$API_KEY" ]; then
-		echo "v2node: missing API env for env-based cert download; set V2NODE_API_HOST/V2NODE_NODE_ID/V2NODE_API_KEY (or mount a config.json with Nodes[0])." >&2
+		echo "v2node: missing API env for env-based cert download; set V2NODE_API_HOST/V2NODE_NODE_ID/V2NODE_API_KEY (or mount a compatible config file)." >&2
 		exit 2
 	fi
 
@@ -143,6 +213,7 @@ maybe_download_geo_assets() {
 generate_config_from_env() {
 	api_host_escaped="$(json_escape "$API_HOST")"
 	api_key_escaped="$(json_escape "$API_KEY")"
+	node_config_dir_escaped="$(json_escape "$NODE_CONFIG_DIR")"
 	runtime_gomemlimit_escaped="$(json_escape "$RUNTIME_GOMEMLIMIT")"
 
 	mkdir -p "$(dirname "$CONFIG_PATH")"
@@ -165,7 +236,8 @@ generate_config_from_env() {
 	      "ApiHost": "${api_host_escaped}",
 	      "NodeID": ${NODE_ID},
 	      "ApiKey": "${api_key_escaped}",
-	      "Timeout": ${TIMEOUT}
+	      "Timeout": ${TIMEOUT},
+	      "ConfigDir": "${node_config_dir_escaped}"
 	    }
 	  ]
 	}

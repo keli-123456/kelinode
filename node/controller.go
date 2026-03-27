@@ -49,7 +49,7 @@ func NewController(api *panel.Client, conf *conf.NodeConfig, info *panel.NodeInf
 		userDeltaSupported: true,
 	}
 	if conf != nil {
-		controller.userSyncStatePath = userSyncStatePath(conf.APIHost, conf.NodeID)
+		controller.userSyncStatePath = userSyncStatePath(conf.ConfigDir, conf.APIHost, conf.NodeID)
 	}
 	return controller
 }

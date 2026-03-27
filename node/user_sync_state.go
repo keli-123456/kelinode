@@ -10,6 +10,7 @@ import (
 	"time"
 
 	panel "github.com/keli-123456/kelinode/api/v2board"
+	"github.com/keli-123456/kelinode/conf"
 )
 
 type userSyncStateFile struct {
@@ -25,9 +26,13 @@ func userSyncStateDir() string {
 	return "/etc/v2node"
 }
 
-func userSyncStatePath(apiHost string, nodeID int) string {
+func userSyncStatePath(configDir string, apiHost string, nodeID int) string {
 	sum := sha1.Sum([]byte(apiHost))
-	return filepath.Join(userSyncStateDir(), fmt.Sprintf("user_sync_%s_%d.json", hex.EncodeToString(sum[:]), nodeID))
+	baseDir := conf.NormalizeConfigDir(configDir)
+	if baseDir == conf.DefaultNodeConfigDir {
+		baseDir = userSyncStateDir()
+	}
+	return filepath.Join(baseDir, fmt.Sprintf("user_sync_%s_%d.json", hex.EncodeToString(sum[:]), nodeID))
 }
 
 func loadUserSyncState(path string) (*userSyncStateFile, error) {

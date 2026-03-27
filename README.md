@@ -37,6 +37,22 @@ Docker 环境变量：
 - `V2NODE_HEALTH_PORT`
 - `V2NODE_GOMEMLIMIT`
 - `V2NODE_GOGC`
+- `V2NODE_NODE_CONFIG_DIR`
+
+## 配置兼容
+
+`v2node` 现在同时支持：
+
+- 旧版 `config.json`
+- 新版 `config.yml` / `config.yaml`
+
+默认会优先读取你显式传入的 `--config`，否则在 `/etc/v2node/` 下自动回退：
+
+1. `config.json`
+2. `config.yml`
+3. `config.yaml`
+
+新版 `config.yml v2` 可用字段见 [config.yml.example](./config.yml.example)。
 
 ## Stars 增长记录
 

@@ -136,7 +136,13 @@ update() {
 
 config() {
     echo "v2node在修改配置后会自动尝试重启"
-    vi /etc/v2node/config.json
+    local config_file="/etc/v2node/config.json"
+    if [[ ! -f "$config_file" && -f /etc/v2node/config.yml ]]; then
+        config_file="/etc/v2node/config.yml"
+    elif [[ ! -f "$config_file" && -f /etc/v2node/config.yaml ]]; then
+        config_file="/etc/v2node/config.yaml"
+    fi
+    vi "$config_file"
     sleep 2
     restart
     check_status
@@ -443,7 +449,8 @@ generate_v2node_config() {
             "ApiHost": "${api_host}",
             "NodeID": ${node_id},
             "ApiKey": "${api_key}",
-            "Timeout": 15
+            "Timeout": 15,
+            "ConfigDir": "/etc/v2node"
         }
     ]
 }

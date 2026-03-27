@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"encoding/json"
+
+	"github.com/keli-123456/kelinode/conf"
 )
 
 // Security type
@@ -183,11 +185,12 @@ func (c *Client) GetNodeInfo(ctx context.Context) (node *NodeInfo, err error) {
 	node.Tag = fmt.Sprintf("[%s]-%s:%d", c.APIHost, node.Type, node.Id)
 	cf := cm.TlsSettings.CertFile
 	kf := cm.TlsSettings.KeyFile
+	configDir := conf.NormalizeConfigDir(c.ConfigDir)
 	if cf == "" {
-		cf = filepath.Join("/etc/v2node/", cm.Protocol+strconv.Itoa(c.NodeId)+".cer")
+		cf = filepath.Join(configDir, cm.Protocol+strconv.Itoa(c.NodeId)+".cer")
 	}
 	if kf == "" {
-		kf = filepath.Join("/etc/v2node/", cm.Protocol+strconv.Itoa(c.NodeId)+".key")
+		kf = filepath.Join(configDir, cm.Protocol+strconv.Itoa(c.NodeId)+".key")
 	}
 	cm.CertInfo = &CertInfo{
 		CertMode:         cm.TlsSettings.CertMode,

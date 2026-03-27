@@ -1,0 +1,169 @@
+package conf
+
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"github.com/spf13/viper"
+)
+
+type configV2 struct {
+	Panel    panelConfigV2    `mapstructure:"panel"`
+	Kernel   kernelConfigV2   `mapstructure:"kernel"`
+	Log      logConfigV2      `mapstructure:"log"`
+	Runtime  runtimeConfigV2  `mapstructure:"runtime"`
+	Realtime realtimeConfigV2 `mapstructure:"realtime"`
+	Health   int              `mapstructure:"health_port"`
+	Pprof    int              `mapstructure:"pprof_port"`
+	Nodes    []nodeConfigV2   `mapstructure:"nodes"`
+}
+
+type panelConfigV2 struct {
+	URL     string `mapstructure:"url"`
+	Token   string `mapstructure:"token"`
+	NodeID  int    `mapstructure:"node_id"`
+	Timeout int    `mapstructure:"timeout"`
+}
+
+type kernelConfigV2 struct {
+	Type      string `mapstructure:"type"`
+	ConfigDir string `mapstructure:"config_dir"`
+	LogLevel  string `mapstructure:"log_level"`
+}
+
+type logConfigV2 struct {
+	Level  string `mapstructure:"level"`
+	Output string `mapstructure:"output"`
+	Access string `mapstructure:"access"`
+}
+
+type runtimeConfigV2 struct {
+	GoMemLimit string `mapstructure:"gomemlimit"`
+	GOGC       int    `mapstructure:"gogc"`
+}
+
+type realtimeConfigV2 struct {
+	Enabled           *bool  `mapstructure:"enabled"`
+	URL               string `mapstructure:"url"`
+	PingInterval      int    `mapstructure:"ping_interval"`
+	ReconnectInterval int    `mapstructure:"reconnect_interval"`
+}
+
+type nodeConfigV2 struct {
+	URL       string `mapstructure:"url"`
+	Token     string `mapstructure:"token"`
+	NodeID    int    `mapstructure:"node_id"`
+	Timeout   int    `mapstructure:"timeout"`
+	ConfigDir string `mapstructure:"config_dir"`
+}
+
+func isConfigV2(v *viper.Viper) bool {
+	if v == nil {
+		return false
+	}
+	return v.IsSet("panel") || v.IsSet("kernel") || v.IsSet("runtime") || v.IsSet("health_port")
+}
+
+func (p *Conf) loadFromV2(v *viper.Viper) error {
+	cfg := configV2{}
+	if err := v.Unmarshal(&cfg); err != nil {
+		return fmt.Errorf("unmarshal config v2 error: %w", err)
+	}
+
+	if strings.TrimSpace(cfg.Log.Level) != "" {
+		p.LogConfig.Level = strings.TrimSpace(cfg.Log.Level)
+	}
+	if strings.TrimSpace(cfg.Log.Output) != "" {
+		p.LogConfig.Output = strings.TrimSpace(cfg.Log.Output)
+	}
+	if strings.TrimSpace(cfg.Log.Access) != "" {
+		p.LogConfig.Access = strings.TrimSpace(cfg.Log.Access)
+	}
+	if strings.TrimSpace(cfg.Kernel.LogLevel) != "" {
+		p.LogConfig.CoreLevel = strings.TrimSpace(cfg.Kernel.LogLevel)
+	}
+
+	p.HealthPort = cfg.Health
+	p.PprofPort = cfg.Pprof
+	p.RuntimeConfig = RuntimeConfig{
+		GoMemLimit: strings.TrimSpace(cfg.Runtime.GoMemLimit),
+		GOGC:       cfg.Runtime.GOGC,
+	}
+	if cfg.Realtime.Enabled != nil {
+		p.RealtimeConfig.Enabled = *cfg.Realtime.Enabled
+	}
+	if strings.TrimSpace(cfg.Realtime.URL) != "" {
+		p.RealtimeConfig.URL = strings.TrimSpace(cfg.Realtime.URL)
+	}
+	if cfg.Realtime.PingInterval > 0 {
+		p.RealtimeConfig.PingInterval = cfg.Realtime.PingInterval
+	}
+	if cfg.Realtime.ReconnectInterval > 0 {
+		p.RealtimeConfig.ReconnectInterval = cfg.Realtime.ReconnectInterval
+	}
+
+	baseAPIHost := strings.TrimSpace(cfg.Panel.URL)
+	baseToken := strings.TrimSpace(cfg.Panel.Token)
+	baseTimeout := cfg.Panel.Timeout
+	baseConfigDir := NormalizeConfigDir(cfg.Kernel.ConfigDir)
+
+	if len(cfg.Nodes) == 0 {
+		if baseAPIHost == "" || baseToken == "" || cfg.Panel.NodeID <= 0 {
+			return fmt.Errorf("config v2 requires panel.url, panel.token and panel.node_id when nodes is empty")
+		}
+		p.NodeConfigs = []NodeConfig{
+			{
+				APIHost:   baseAPIHost,
+				NodeID:    cfg.Panel.NodeID,
+				Key:       baseToken,
+				Timeout:   baseTimeout,
+				ConfigDir: baseConfigDir,
+			},
+		}
+		return nil
+	}
+
+	multiNode := len(cfg.Nodes) > 1
+	nodes := make([]NodeConfig, 0, len(cfg.Nodes))
+	for _, row := range cfg.Nodes {
+		apiHost := firstNonEmpty(strings.TrimSpace(row.URL), baseAPIHost)
+		token := firstNonEmpty(strings.TrimSpace(row.Token), baseToken)
+		timeout := row.Timeout
+		if timeout <= 0 {
+			timeout = baseTimeout
+		}
+		if apiHost == "" || token == "" || row.NodeID <= 0 {
+			return fmt.Errorf("config v2 nodes entries require node_id and inherit or define url/token")
+		}
+		nodes = append(nodes, NodeConfig{
+			APIHost:   apiHost,
+			NodeID:    row.NodeID,
+			Key:       token,
+			Timeout:   timeout,
+			ConfigDir: resolveNodeConfigDir(baseConfigDir, row.ConfigDir, row.NodeID, multiNode),
+		})
+	}
+	p.NodeConfigs = nodes
+	return nil
+}
+
+func resolveNodeConfigDir(baseDir string, override string, nodeID int, multiNode bool) string {
+	if strings.TrimSpace(override) != "" {
+		return NormalizeConfigDir(override)
+	}
+	root := NormalizeConfigDir(baseDir)
+	if multiNode {
+		return filepath.Join(root, fmt.Sprintf("node-%d", nodeID))
+	}
+	return root
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
