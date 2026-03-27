@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -212,7 +213,7 @@ func (c *Controller) resolveRealtimeOptions() *RealtimeOptions {
 	if c.info != nil && c.info.Common != nil && c.info.Common.BaseConfig != nil && c.info.Common.BaseConfig.Realtime != nil {
 		panelEnabled = c.info.Common.BaseConfig.Realtime.Enabled
 		panelURL = strings.TrimSpace(c.info.Common.BaseConfig.Realtime.URL)
-		panelPing = intervalToTime(c.info.Common.BaseConfig.Realtime.PingInterval)
+		panelPing = realtimeIntervalToDuration(c.info.Common.BaseConfig.Realtime.PingInterval)
 	}
 
 	localURL := strings.TrimSpace(c.realtimeConfig.URL)
@@ -327,4 +328,22 @@ func deriveRealtimeURL(apiHost string) string {
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return parsed.String()
+}
+
+func realtimeIntervalToDuration(value interface{}) time.Duration {
+	if value == nil {
+		return 0
+	}
+
+	switch reflect.TypeOf(value).Kind() {
+	case reflect.Int:
+		return time.Duration(value.(int)) * time.Second
+	case reflect.String:
+		seconds, _ := strconv.Atoi(value.(string))
+		return time.Duration(seconds) * time.Second
+	case reflect.Float64:
+		return time.Duration(value.(float64)) * time.Second
+	default:
+		return time.Duration(reflect.ValueOf(value).Int()) * time.Second
+	}
 }
