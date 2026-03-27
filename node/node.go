@@ -15,7 +15,7 @@ type Node struct {
 	NodeInfos   []*panel.NodeInfo
 }
 
-func New(nodes []conf.NodeConfig) (*Node, error) {
+func New(nodes []conf.NodeConfig, realtime conf.RealtimeConfig) (*Node, error) {
 	n := &Node{
 		controllers: make([]*Controller, len(nodes)),
 		NodeInfos:   make([]*panel.NodeInfo, len(nodes)),
@@ -29,7 +29,7 @@ func New(nodes []conf.NodeConfig) (*Node, error) {
 		if err != nil {
 			return nil, err
 		}
-		n.controllers[i] = NewController(p, &node, info)
+		n.controllers[i] = NewController(p, &node, info, realtime)
 		n.NodeInfos[i] = info
 	}
 	return n, nil

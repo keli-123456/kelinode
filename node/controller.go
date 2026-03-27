@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	panel "github.com/keli-123456/kelinode/api/v2board"
 	"github.com/keli-123456/kelinode/common/task"
@@ -22,6 +23,7 @@ type Controller struct {
 	userRevision              int64
 	userDeltaSupported        bool
 	userSyncStatePath         string
+	realtimeConfig            conf.RealtimeConfig
 	aliveMap                  map[int]int
 	conf                      *conf.NodeConfig
 	info                      *panel.NodeInfo
@@ -29,14 +31,21 @@ type Controller struct {
 	nodeUserMonitorPeriodic   *task.Task
 	userReportPeriodic        *task.Task
 	renewCertPeriodic         *task.Task
+	userSyncMu                sync.Mutex
+	configCheckMu             sync.Mutex
+	realtimeClient            *RealtimeClient
+	realtimeCancel            context.CancelFunc
+	realtimeConfigCh          chan struct{}
+	realtimeUserCh            chan struct{}
 }
 
 // NewController return a Node controller with default parameters.
-func NewController(api *panel.Client, conf *conf.NodeConfig, info *panel.NodeInfo) *Controller {
+func NewController(api *panel.Client, conf *conf.NodeConfig, info *panel.NodeInfo, realtime conf.RealtimeConfig) *Controller {
 	controller := &Controller{
 		apiClient:          api,
 		info:               info,
 		conf:               conf,
+		realtimeConfig:     realtime,
 		userDeltaSupported: true,
 	}
 	if conf != nil {
@@ -98,6 +107,7 @@ func (c *Controller) Start(x *core.V2Core) error {
 	log.WithField("tag", c.tag).Infof("Added %d new users", added)
 	c.info = node
 	c.startTasks(node)
+	c.startRealtime()
 	return nil
 }
 
@@ -152,6 +162,14 @@ func (c *Controller) loadAndSyncUsers(ctx context.Context) ([]panel.UserInfo, er
 
 // Close implement the Close() function of the service interface
 func (c *Controller) Close() error {
+	if c.realtimeCancel != nil {
+		c.realtimeCancel()
+		c.realtimeCancel = nil
+	}
+	if c.realtimeClient != nil {
+		c.realtimeClient.Close()
+		c.realtimeClient = nil
+	}
 	limiter.DeleteLimiter(c.tag)
 	if c.nodeConfigMonitorPeriodic != nil {
 		c.nodeConfigMonitorPeriodic.Close()

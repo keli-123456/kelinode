@@ -72,6 +72,9 @@ func (c *Controller) reloadTask() {
 }
 
 func (c *Controller) nodeConfigMonitor(ctx context.Context) (err error) {
+	c.configCheckMu.Lock()
+	defer c.configCheckMu.Unlock()
+
 	newN, err := c.apiClient.GetNodeInfo(ctx)
 	if err != nil {
 		log.WithFields(log.Fields{
@@ -101,6 +104,9 @@ func (c *Controller) nodeConfigMonitor(ctx context.Context) (err error) {
 }
 
 func (c *Controller) nodeUserMonitor(ctx context.Context) (err error) {
+	c.userSyncMu.Lock()
+	defer c.userSyncMu.Unlock()
+
 	var (
 		deleted []panel.UserInfo
 		added   []panel.UserInfo

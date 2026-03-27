@@ -8,9 +8,10 @@ import (
 )
 
 type Conf struct {
-	LogConfig   LogConfig    `mapstructure:"Log"`
-	NodeConfigs []NodeConfig `mapstructure:"Nodes"`
-	PprofPort   int          `mapstructure:"PprofPort"`
+	LogConfig      LogConfig      `mapstructure:"Log"`
+	NodeConfigs    []NodeConfig   `mapstructure:"Nodes"`
+	PprofPort      int            `mapstructure:"PprofPort"`
+	RealtimeConfig RealtimeConfig `mapstructure:"Realtime"`
 }
 
 type LogConfig struct {
@@ -30,6 +31,13 @@ type NodeConfig struct {
 	NodeID  int    `mapstructure:"NodeID"`
 	Key     string `mapstructure:"ApiKey"`
 	Timeout int    `mapstructure:"Timeout"`
+}
+
+type RealtimeConfig struct {
+	Enabled           bool   `mapstructure:"Enabled"`
+	URL               string `mapstructure:"Url"`
+	PingInterval      int    `mapstructure:"PingInterval"`
+	ReconnectInterval int    `mapstructure:"ReconnectInterval"`
 }
 
 func New() *Conf {
