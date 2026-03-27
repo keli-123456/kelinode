@@ -16,9 +16,11 @@ import (
 
 type realtimeMessage struct {
 	Type     string `json:"type"`
+	Message  string `json:"message,omitempty"`
 	Topic    string `json:"topic"`
 	Reason   string `json:"reason"`
 	Revision int64  `json:"revision"`
+	ServerID int    `json:"server_id,omitempty"`
 	Ts       int64  `json:"ts"`
 	Token    string `json:"token,omitempty"`
 	NodeID   int    `json:"node_id,omitempty"`
@@ -166,10 +168,26 @@ func (c *RealtimeClient) connectAndServe() error {
 
 		switch message.Type {
 		case "hello_ack":
-			log.WithField("tag", c.opts.LogTag).Info("Realtime websocket authenticated")
+			log.WithFields(log.Fields{
+				"tag":       c.opts.LogTag,
+				"server_id": message.ServerID,
+				"node_id":   message.NodeID,
+				"node_type": message.NodeType,
+			}).Info("Realtime websocket authenticated")
 		case "ping":
 			_ = writeJSON(realtimeMessage{Type: "pong", Ts: time.Now().Unix()})
+		case "error":
+			log.WithFields(log.Fields{
+				"tag":     c.opts.LogTag,
+				"message": message.Message,
+			}).Warn("Realtime websocket error")
 		case "invalidate":
+			log.WithFields(log.Fields{
+				"tag":      c.opts.LogTag,
+				"topic":    message.Topic,
+				"reason":   message.Reason,
+				"revision": message.Revision,
+			}).Info("Realtime invalidate received")
 			if c.onMessage != nil {
 				c.onMessage(message)
 			}
