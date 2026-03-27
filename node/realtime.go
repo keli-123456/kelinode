@@ -109,6 +109,10 @@ func (c *RealtimeClient) connectAndServe() error {
 		return conn.WriteJSON(message)
 	}
 
+	if err := writeJSON(realtimeMessage{Type: "ping", Ts: time.Now().Unix()}); err != nil {
+		return err
+	}
+
 	done := make(chan struct{})
 	defer close(done)
 
