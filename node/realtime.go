@@ -20,6 +20,9 @@ type realtimeMessage struct {
 	Reason   string `json:"reason"`
 	Revision int64  `json:"revision"`
 	Ts       int64  `json:"ts"`
+	Token    string `json:"token,omitempty"`
+	NodeID   int    `json:"node_id,omitempty"`
+	NodeType string `json:"node_type,omitempty"`
 }
 
 type RealtimeOptions struct {
@@ -109,7 +112,13 @@ func (c *RealtimeClient) connectAndServe() error {
 		return conn.WriteJSON(message)
 	}
 
-	if err := writeJSON(realtimeMessage{Type: "ping", Ts: time.Now().Unix()}); err != nil {
+	if err := writeJSON(realtimeMessage{
+		Type:     "ping",
+		Ts:       time.Now().Unix(),
+		Token:    c.opts.Token,
+		NodeID:   c.opts.NodeID,
+		NodeType: c.opts.NodeType,
+	}); err != nil {
 		return err
 	}
 
