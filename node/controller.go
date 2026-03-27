@@ -35,8 +35,8 @@ type Controller struct {
 	configCheckMu             sync.Mutex
 	realtimeClient            *RealtimeClient
 	realtimeCancel            context.CancelFunc
-	realtimeConfigCh          chan struct{}
-	realtimeUserCh            chan struct{}
+	realtimeConfigCh          chan realtimeMessage
+	realtimeUserCh            chan realtimeMessage
 }
 
 // NewController return a Node controller with default parameters.

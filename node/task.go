@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	panel "github.com/keli-123456/kelinode/api/v2board"
@@ -10,6 +11,12 @@ import (
 	vCore "github.com/keli-123456/kelinode/core"
 	log "github.com/sirupsen/logrus"
 )
+
+type userSyncSummary struct {
+	Deleted int
+	Added   int
+	Updated int
+}
 
 func (c *Controller) startTasks(node *panel.NodeInfo) {
 	// fetch node config task (lightweight, for reload detection)
@@ -72,10 +79,7 @@ func (c *Controller) reloadTask() {
 }
 
 func (c *Controller) nodeConfigMonitor(ctx context.Context) (err error) {
-	c.configCheckMu.Lock()
-	defer c.configCheckMu.Unlock()
-
-	newN, err := c.apiClient.GetNodeInfo(ctx)
+	changed, err := c.executeNodeConfigCheck(ctx)
 	if err != nil {
 		log.WithFields(log.Fields{
 			"tag": c.tag,
@@ -83,10 +87,25 @@ func (c *Controller) nodeConfigMonitor(ctx context.Context) (err error) {
 		}).Error("Get node info failed")
 		return nil
 	}
-	if newN != nil {
+	if changed {
 		log.WithFields(log.Fields{
 			"tag": c.tag,
 		}).Info("Got new node info, reload")
+		return nil
+	}
+	log.WithField("tag", c.tag).Debug("Node info no change")
+	return nil
+}
+
+func (c *Controller) executeNodeConfigCheck(ctx context.Context) (bool, error) {
+	c.configCheckMu.Lock()
+	defer c.configCheckMu.Unlock()
+
+	newN, err := c.apiClient.GetNodeInfo(ctx)
+	if err != nil {
+		return false, err
+	}
+	if newN != nil {
 		// Non-blocking signal to avoid goroutine stuck when channel is full or nil
 		if c.server.ReloadCh != nil {
 			select {
@@ -94,16 +113,31 @@ func (c *Controller) nodeConfigMonitor(ctx context.Context) (err error) {
 			default:
 			}
 		} else {
-			log.Panic("Reload failed")
+			return false, fmt.Errorf("reload channel is nil")
 		}
 		// Stop current task execution. Core/nodes may be closing/reloading now.
-		return nil
+		return true, nil
 	}
-	log.WithField("tag", c.tag).Debug("Node info no change")
-	return nil
+	return false, nil
 }
 
 func (c *Controller) nodeUserMonitor(ctx context.Context) (err error) {
+	summary, err := c.executeNodeUserSync(ctx)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"tag": c.tag,
+			"err": err,
+		}).Error("Sync users failed")
+		return nil
+	}
+	if summary.Added+summary.Deleted+summary.Updated != 0 {
+		log.WithField("tag", c.tag).
+			Infof("%d user deleted, %d user added, %d user updated", summary.Deleted, summary.Added, summary.Updated)
+	}
+	return nil
+}
+
+func (c *Controller) executeNodeUserSync(ctx context.Context) (userSyncSummary, error) {
 	c.userSyncMu.Lock()
 	defer c.userSyncMu.Unlock()
 
@@ -111,6 +145,7 @@ func (c *Controller) nodeUserMonitor(ctx context.Context) (err error) {
 		deleted []panel.UserInfo
 		added   []panel.UserInfo
 		updated []panel.UserInfo
+		summary userSyncSummary
 	)
 
 	// get user info (prefer delta)
@@ -120,10 +155,7 @@ func (c *Controller) nodeUserMonitor(ctx context.Context) (err error) {
 			if errors.Is(derr, panel.ErrUserDeltaNotSupported) {
 				c.userDeltaSupported = false
 			} else {
-				log.WithFields(log.Fields{
-					"tag": c.tag,
-					"err": derr,
-				}).Error("Get user delta failed")
+				return summary, derr
 			}
 		} else if delta != nil {
 			c.userRevision = delta.Revision
@@ -154,11 +186,7 @@ func (c *Controller) nodeUserMonitor(ctx context.Context) (err error) {
 	if !c.userDeltaSupported {
 		newU, err := c.apiClient.GetUserList(ctx)
 		if err != nil {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("Get user list failed")
-			return nil
+			return summary, err
 		}
 		// node no changed, check users
 		if len(newU) == 0 {
@@ -172,11 +200,7 @@ func (c *Controller) nodeUserMonitor(ctx context.Context) (err error) {
 	// get user alive
 	newA, err := c.apiClient.GetUserAlive(ctx)
 	if err != nil {
-		log.WithFields(log.Fields{
-			"tag": c.tag,
-			"err": err,
-		}).Error("Get alive list failed")
-		return nil
+		return summary, err
 	}
 
 	// update alive list
@@ -186,11 +210,7 @@ func (c *Controller) nodeUserMonitor(ctx context.Context) (err error) {
 	if len(updated) > 0 {
 		c.limiter.UpdateUserInfo(c.tag, updated)
 		if err := c.server.UpdateUserIDs(c.tag, updated); err != nil {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("Update users failed")
-			return nil
+			return summary, err
 		}
 	}
 	if len(deleted) > 0 {
@@ -198,13 +218,9 @@ func (c *Controller) nodeUserMonitor(ctx context.Context) (err error) {
 		err = c.server.DelUsers(ctx, deleted, c.tag)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil
+				return summary, nil
 			}
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("Delete users failed")
-			return nil
+			return summary, err
 		}
 	}
 	if len(added) > 0 {
@@ -216,29 +232,19 @@ func (c *Controller) nodeUserMonitor(ctx context.Context) (err error) {
 		})
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil
+				return summary, nil
 			}
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("Add users failed")
-			return nil
+			return summary, err
 		}
 	}
 	if len(added) > 0 || len(deleted) > 0 {
 		// update Limiter
 		c.limiter.UpdateUser(c.tag, added, deleted)
-		if err != nil {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("limiter users failed")
-			return nil
-		}
 	}
-	if len(added)+len(deleted)+len(updated) != 0 {
-		log.WithField("tag", c.tag).
-			Infof("%d user deleted, %d user added, %d user updated", len(deleted), len(added), len(updated))
+	summary = userSyncSummary{
+		Deleted: len(deleted),
+		Added:   len(added),
+		Updated: len(updated),
 	}
-	return nil
+	return summary, nil
 }

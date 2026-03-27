@@ -17,13 +17,15 @@ import (
 type realtimeMessage struct {
 	Type     string `json:"type"`
 	Message  string `json:"message,omitempty"`
+	EventID  string `json:"event_id,omitempty"`
 	Topic    string `json:"topic"`
 	Reason   string `json:"reason"`
+	Status   string `json:"status,omitempty"`
 	Revision int64  `json:"revision"`
 	ServerID int    `json:"server_id,omitempty"`
 	Ts       int64  `json:"ts"`
 	Token    string `json:"token,omitempty"`
-	NodeID   int    `json:"node_id,omitempty"`
+	NodeID   string `json:"node_id,omitempty"`
 	NodeType string `json:"node_type,omitempty"`
 }
 
@@ -42,6 +44,7 @@ type RealtimeClient struct {
 	cancel    context.CancelFunc
 	opts      RealtimeOptions
 	onMessage func(realtimeMessage)
+	sendCh    chan realtimeMessage
 	wg        sync.WaitGroup
 }
 
@@ -52,6 +55,7 @@ func NewRealtimeClient(parent context.Context, opts RealtimeOptions, onMessage f
 		cancel:    cancel,
 		opts:      opts,
 		onMessage: onMessage,
+		sendCh:    make(chan realtimeMessage, 64),
 	}
 }
 
@@ -63,6 +67,18 @@ func (c *RealtimeClient) Start() {
 func (c *RealtimeClient) Close() {
 	c.cancel()
 	c.wg.Wait()
+}
+
+func (c *RealtimeClient) Send(message realtimeMessage) {
+	select {
+	case c.sendCh <- message:
+	default:
+		log.WithFields(log.Fields{
+			"tag":   c.opts.LogTag,
+			"type":  message.Type,
+			"topic": message.Topic,
+		}).Warn("Realtime outbound queue full")
+	}
 }
 
 func (c *RealtimeClient) run() {
@@ -118,7 +134,7 @@ func (c *RealtimeClient) connectAndServe() error {
 		Type:     "ping",
 		Ts:       time.Now().Unix(),
 		Token:    c.opts.Token,
-		NodeID:   c.opts.NodeID,
+		NodeID:   strconv.Itoa(c.opts.NodeID),
 		NodeType: c.opts.NodeType,
 	}); err != nil {
 		return err
@@ -128,12 +144,15 @@ func (c *RealtimeClient) connectAndServe() error {
 	defer close(done)
 
 	go func() {
-		if c.opts.PingInterval <= 0 {
-			return
+		var (
+			ticker   *time.Ticker
+			tickerCh <-chan time.Time
+		)
+		if c.opts.PingInterval > 0 {
+			ticker = time.NewTicker(c.opts.PingInterval)
+			tickerCh = ticker.C
+			defer ticker.Stop()
 		}
-
-		ticker := time.NewTicker(c.opts.PingInterval)
-		defer ticker.Stop()
 
 		for {
 			select {
@@ -141,8 +160,14 @@ func (c *RealtimeClient) connectAndServe() error {
 				return
 			case <-c.ctx.Done():
 				return
-			case <-ticker.C:
+			case outbound := <-c.sendCh:
+				if err := writeJSON(outbound); err != nil {
+					_ = conn.Close()
+					return
+				}
+			case <-tickerCh:
 				if err := writeJSON(realtimeMessage{Type: "ping", Ts: time.Now().Unix()}); err != nil {
+					_ = conn.Close()
 					return
 				}
 			}
@@ -217,8 +242,8 @@ func (c *Controller) startRealtime() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	c.realtimeCancel = cancel
-	c.realtimeConfigCh = make(chan struct{}, 1)
-	c.realtimeUserCh = make(chan struct{}, 1)
+	c.realtimeConfigCh = make(chan realtimeMessage, 32)
+	c.realtimeUserCh = make(chan realtimeMessage, 32)
 
 	go c.runRealtimeConfigWorker(ctx)
 	go c.runRealtimeUserWorker(ctx)
@@ -226,9 +251,9 @@ func (c *Controller) startRealtime() {
 	c.realtimeClient = NewRealtimeClient(ctx, *options, func(message realtimeMessage) {
 		switch message.Topic {
 		case "config":
-			c.enqueueRealtimeConfigCheck()
+			c.enqueueRealtimeConfigCheck(message)
 		case "users":
-			c.enqueueRealtimeUserSync()
+			c.enqueueRealtimeUserSync(message)
 		}
 	})
 	c.realtimeClient.Start()
@@ -287,16 +312,16 @@ func (c *Controller) resolveRealtimeOptions() *RealtimeOptions {
 	}
 }
 
-func (c *Controller) enqueueRealtimeConfigCheck() {
+func (c *Controller) enqueueRealtimeConfigCheck(message realtimeMessage) {
 	select {
-	case c.realtimeConfigCh <- struct{}{}:
+	case c.realtimeConfigCh <- message:
 	default:
 	}
 }
 
-func (c *Controller) enqueueRealtimeUserSync() {
+func (c *Controller) enqueueRealtimeUserSync(message realtimeMessage) {
 	select {
-	case c.realtimeUserCh <- struct{}{}:
+	case c.realtimeUserCh <- message:
 	default:
 	}
 }
@@ -306,11 +331,22 @@ func (c *Controller) runRealtimeConfigWorker(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-c.realtimeConfigCh:
-			c.drainRealtimeChannel(c.realtimeConfigCh)
+		case message := <-c.realtimeConfigCh:
 			execCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-			_ = c.nodeConfigMonitor(execCtx)
+			c.sendRealtimeReceipt("config", message, "received", "")
+			c.sendRealtimeReceipt("config", message, "applying", "")
+			changed, err := c.executeNodeConfigCheck(execCtx)
 			cancel()
+			if err != nil {
+				c.sendRealtimeReceipt("config", message, "failed", err.Error())
+				continue
+			}
+
+			if changed {
+				c.sendRealtimeReceipt("config", message, "applied", "reload queued")
+			} else {
+				c.sendRealtimeReceipt("config", message, "applied", "no change")
+			}
 		}
 	}
 }
@@ -320,23 +356,50 @@ func (c *Controller) runRealtimeUserWorker(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-c.realtimeUserCh:
-			c.drainRealtimeChannel(c.realtimeUserCh)
+		case message := <-c.realtimeUserCh:
 			execCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-			_ = c.nodeUserMonitor(execCtx)
+			c.sendRealtimeReceipt("users", message, "received", "")
+			c.sendRealtimeReceipt("users", message, "applying", "")
+			summary, err := c.executeNodeUserSync(execCtx)
 			cancel()
+			if err != nil {
+				c.sendRealtimeReceipt("users", message, "failed", err.Error())
+				continue
+			}
+
+			c.sendRealtimeReceipt("users", message, "applied", formatRealtimeUserSummary(summary))
 		}
 	}
 }
 
-func (c *Controller) drainRealtimeChannel(ch chan struct{}) {
-	for {
-		select {
-		case <-ch:
-		default:
-			return
-		}
+func (c *Controller) sendRealtimeReceipt(topic string, source realtimeMessage, status string, message string) {
+	if c.realtimeClient == nil {
+		return
 	}
+
+	c.realtimeClient.Send(realtimeMessage{
+		Type:    "receipt",
+		Topic:   topic,
+		EventID: source.EventID,
+		Reason:  source.Reason,
+		Status:  status,
+		Message: truncateRealtimeReceiptMessage(message),
+		Ts:      time.Now().Unix(),
+	})
+}
+
+func formatRealtimeUserSummary(summary userSyncSummary) string {
+	return "deleted=" + strconv.Itoa(summary.Deleted) +
+		" added=" + strconv.Itoa(summary.Added) +
+		" updated=" + strconv.Itoa(summary.Updated)
+}
+
+func truncateRealtimeReceiptMessage(message string) string {
+	message = strings.TrimSpace(message)
+	if len(message) <= 240 {
+		return message
+	}
+	return message[:237] + "..."
 }
 
 func deriveRealtimeURL(apiHost string) string {
