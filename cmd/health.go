@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/keli-123456/kelinode/conf"
+	"github.com/keli-123456/kelinode/node"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -41,10 +42,12 @@ type healthResponse struct {
 }
 
 func newHealthState(configPath string) *healthState {
-	return &healthState{
+	state := &healthState{
 		startedAt:  time.Now(),
 		configPath: configPath,
 	}
+	state.publishSnapshot("starting")
+	return state
 }
 
 func (s *healthState) UpdateConfig(cfg *conf.Conf, runtime appliedRuntimeSettings) {
@@ -52,13 +55,14 @@ func (s *healthState) UpdateConfig(cfg *conf.Conf, runtime appliedRuntimeSetting
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.healthPort == 0 {
 		s.healthPort = cfg.HealthPort
 	}
 	s.nodeCount = len(cfg.NodeConfigs)
 	s.realtimeEnabled = cfg.RealtimeConfig.Enabled || cfg.RealtimeConfig.URL != ""
 	s.runtime = runtime
+	s.mu.Unlock()
+	s.publishSnapshot("")
 }
 
 func (s *healthState) MarkReady(ready bool) {
@@ -66,11 +70,12 @@ func (s *healthState) MarkReady(ready bool) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.ready = ready
 	if ready {
 		s.lastReloadAt = time.Now()
 	}
+	s.mu.Unlock()
+	s.publishSnapshot("")
 }
 
 func startHealthServer(port int, state *healthState) {
@@ -144,6 +149,32 @@ func (s *healthState) snapshot(status string) healthResponse {
 		response.LastReloadAt = s.lastReloadAt.Format(time.RFC3339)
 	}
 	return response
+}
+
+func (s *healthState) publishSnapshot(status string) {
+	if s == nil {
+		return
+	}
+
+	payload := s.snapshot(status)
+	node.SetRealtimeHealthSnapshot(node.RealtimeHealthSnapshot{
+		Status:          payload.Status,
+		Ready:           payload.Ready,
+		Version:         payload.Version,
+		ConfigPath:      payload.ConfigPath,
+		StartedAt:       payload.StartedAt,
+		UptimeSeconds:   payload.UptimeSeconds,
+		LastReloadAt:    payload.LastReloadAt,
+		NodeCount:       payload.NodeCount,
+		RealtimeEnabled: payload.RealtimeEnabled,
+		HealthPort:      payload.HealthPort,
+		Goroutines:      payload.Goroutines,
+		Runtime: node.RealtimeRuntimeSnapshot{
+			GoMemLimit:      payload.Runtime.GoMemLimit,
+			GoMemLimitBytes: payload.Runtime.GoMemLimitBytes,
+			GOGC:            payload.Runtime.GOGC,
+		},
+	})
 }
 
 func writeHealthResponse(w http.ResponseWriter, statusCode int, payload healthResponse) {

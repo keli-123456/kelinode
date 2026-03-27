@@ -15,18 +15,19 @@ import (
 )
 
 type realtimeMessage struct {
-	Type     string `json:"type"`
-	Message  string `json:"message,omitempty"`
-	EventID  string `json:"event_id,omitempty"`
-	Topic    string `json:"topic"`
-	Reason   string `json:"reason"`
-	Status   string `json:"status,omitempty"`
-	Revision int64  `json:"revision"`
-	ServerID int    `json:"server_id,omitempty"`
-	Ts       int64  `json:"ts"`
-	Token    string `json:"token,omitempty"`
-	NodeID   string `json:"node_id,omitempty"`
-	NodeType string `json:"node_type,omitempty"`
+	Type     string                  `json:"type"`
+	Message  string                  `json:"message,omitempty"`
+	EventID  string                  `json:"event_id,omitempty"`
+	Topic    string                  `json:"topic"`
+	Reason   string                  `json:"reason"`
+	Status   string                  `json:"status,omitempty"`
+	Revision int64                   `json:"revision"`
+	ServerID int                     `json:"server_id,omitempty"`
+	Ts       int64                   `json:"ts"`
+	Token    string                  `json:"token,omitempty"`
+	NodeID   string                  `json:"node_id,omitempty"`
+	NodeType string                  `json:"node_type,omitempty"`
+	Health   *RealtimeHealthSnapshot `json:"health,omitempty"`
 }
 
 type RealtimeOptions struct {
@@ -136,6 +137,7 @@ func (c *RealtimeClient) connectAndServe() error {
 		Token:    c.opts.Token,
 		NodeID:   strconv.Itoa(c.opts.NodeID),
 		NodeType: c.opts.NodeType,
+		Health:   GetRealtimeHealthSnapshot(),
 	}); err != nil {
 		return err
 	}
@@ -166,7 +168,11 @@ func (c *RealtimeClient) connectAndServe() error {
 					return
 				}
 			case <-tickerCh:
-				if err := writeJSON(realtimeMessage{Type: "ping", Ts: time.Now().Unix()}); err != nil {
+				if err := writeJSON(realtimeMessage{
+					Type:   "ping",
+					Ts:     time.Now().Unix(),
+					Health: GetRealtimeHealthSnapshot(),
+				}); err != nil {
 					_ = conn.Close()
 					return
 				}
