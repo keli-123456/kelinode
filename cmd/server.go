@@ -44,6 +44,8 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	showVersion()
 	c := conf.New()
 	err := c.LoadFromPath(config)
+	health := newHealthState(config)
+	runtimeState := &runtimeTuningState{}
 	log.SetFormatter(&log.TextFormatter{
 		FullTimestamp:   true,
 		TimestampFormat: time.RFC3339,
@@ -70,6 +72,8 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		}
 		log.SetOutput(f)
 	}
+	appliedRuntime := applyRuntimeSettings(c.RuntimeConfig, runtimeState)
+	health.UpdateConfig(c, appliedRuntime)
 	// Enable pprof if configured
 	if c.PprofPort != 0 {
 		go func() {
@@ -79,6 +83,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 			}
 		}()
 	}
+	startHealthServer(c.HealthPort, health)
 	//init limiter
 	limiter.Init()
 	//get node info
@@ -104,6 +109,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		log.WithField("err", err).Error("Run nodes failed")
 		return
 	}
+	health.MarkReady(true)
 	log.Info("Nodes started")
 	if watch {
 		// On file change, just signal reload; do not run reload concurrently here
@@ -131,15 +137,17 @@ func serverHandle(_ *cobra.Command, _ []string) {
 			os.Exit(0)
 		case <-reloadCh:
 			log.Info("收到重启信号，正在重新加载配置...")
-			if err := reload(config, &nodes, &v2core); err != nil {
+			health.MarkReady(false)
+			if err := reload(config, &nodes, &v2core, health, runtimeState); err != nil {
 				log.WithField("err", err).Panic("重启失败")
 			}
+			health.MarkReady(true)
 			log.Info("重启成功")
 		}
 	}
 }
 
-func reload(config string, nodes **node.Node, v2core **core.V2Core) error {
+func reload(config string, nodes **node.Node, v2core **core.V2Core, health *healthState, runtimeState *runtimeTuningState) error {
 	// Preserve old reload channel so new core continues to receive signals
 	var oldReloadCh chan struct{}
 	if *v2core != nil {
@@ -181,6 +189,7 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core) error {
 			log.SetOutput(f)
 		}
 	}
+	appliedRuntime := applyRuntimeSettings(newConf.RuntimeConfig, runtimeState)
 
 	newNodes, err := node.New(newConf.NodeConfigs, newConf.RealtimeConfig)
 	if err != nil {
@@ -200,6 +209,9 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core) error {
 
 	*nodes = newNodes
 	*v2core = newCore
+	if health != nil {
+		health.UpdateConfig(newConf, appliedRuntime)
+	}
 
 	runtime.GC()
 	return nil

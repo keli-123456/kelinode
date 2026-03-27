@@ -13,9 +13,14 @@ TIMEOUT="${TIMEOUT_RAW:-30}"
 
 PPROF_PORT_RAW="${V2NODE_PPROF_PORT:-${PPROF_PORT:-}}"
 PPROF_PORT="${PPROF_PORT_RAW:-0}"
+HEALTH_PORT_RAW="${V2NODE_HEALTH_PORT:-${HEALTH_PORT:-}}"
+HEALTH_PORT="${HEALTH_PORT_RAW:-0}"
 
 LOG_LEVEL="${V2NODE_LOG_LEVEL:-info}"
 CORE_LOG_LEVEL="${V2NODE_CORE_LOG_LEVEL:-error}"
+RUNTIME_GOMEMLIMIT="${V2NODE_GOMEMLIMIT:-${GOMEMLIMIT:-}}"
+RUNTIME_GOGC_RAW="${V2NODE_GOGC:-${GOGC:-}}"
+RUNTIME_GOGC="${RUNTIME_GOGC_RAW:-0}"
 
 TLS_CERT_URL="${V2NODE_TLS_CERT_URL:-${V2NODE_CERT_URL:-}}"
 TLS_KEY_URL="${V2NODE_TLS_KEY_URL:-${V2NODE_KEY_URL:-}}"
@@ -138,16 +143,22 @@ maybe_download_geo_assets() {
 generate_config_from_env() {
 	api_host_escaped="$(json_escape "$API_HOST")"
 	api_key_escaped="$(json_escape "$API_KEY")"
+	runtime_gomemlimit_escaped="$(json_escape "$RUNTIME_GOMEMLIMIT")"
 
 	mkdir -p "$(dirname "$CONFIG_PATH")"
 	cat >"$CONFIG_PATH" <<-EOF
 	{
 	  "PprofPort": ${PPROF_PORT},
+	  "HealthPort": ${HEALTH_PORT},
 	  "Log": {
 	    "Level": "${LOG_LEVEL}",
 	    "CoreLevel": "${CORE_LOG_LEVEL}",
 	    "Output": "",
 	    "Access": "none"
+	  },
+	  "Runtime": {
+	    "GoMemLimit": "${runtime_gomemlimit_escaped}",
+	    "GOGC": ${RUNTIME_GOGC}
 	  },
 	  "Nodes": [
 	    {
@@ -185,6 +196,16 @@ ensure_config_for_server() {
 				exit 2
 				;;
 		esac
+		case "$HEALTH_PORT" in
+			*[!0-9]*|'')
+				echo "v2node: HEALTH_PORT must be an integer." >&2
+				exit 2
+				;;
+		esac
+		if ! printf '%s' "$RUNTIME_GOGC" | grep -Eq '^-?[0-9]+$'; then
+			echo "v2node: GOGC must be an integer." >&2
+			exit 2
+		fi
 		generate_config_from_env
 	fi
 

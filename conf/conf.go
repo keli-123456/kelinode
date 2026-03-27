@@ -11,6 +11,8 @@ type Conf struct {
 	LogConfig      LogConfig      `mapstructure:"Log"`
 	NodeConfigs    []NodeConfig   `mapstructure:"Nodes"`
 	PprofPort      int            `mapstructure:"PprofPort"`
+	HealthPort     int            `mapstructure:"HealthPort"`
+	RuntimeConfig  RuntimeConfig  `mapstructure:"Runtime"`
 	RealtimeConfig RealtimeConfig `mapstructure:"Realtime"`
 }
 
@@ -40,6 +42,11 @@ type RealtimeConfig struct {
 	ReconnectInterval int    `mapstructure:"ReconnectInterval"`
 }
 
+type RuntimeConfig struct {
+	GoMemLimit string `mapstructure:"GoMemLimit"`
+	GOGC       int    `mapstructure:"GOGC"`
+}
+
 func New() *Conf {
 	return &Conf{
 		LogConfig: LogConfig{
@@ -47,6 +54,11 @@ func New() *Conf {
 			CoreLevel: "",
 			Output:    "",
 			Access:    "none",
+		},
+		HealthPort: 0,
+		RuntimeConfig: RuntimeConfig{
+			GoMemLimit: "",
+			GOGC:       0,
 		},
 	}
 }

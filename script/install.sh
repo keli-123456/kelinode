@@ -226,10 +226,15 @@ generate_v2node_config() {
         mkdir -p /etc/v2node >/dev/null 2>&1
         cat > /etc/v2node/config.json <<EOF
 {
+    "HealthPort": 0,
     "Log": {
         "Level": "warning",
         "Output": "",
         "Access": "none"
+    },
+    "Runtime": {
+        "GoMemLimit": "",
+        "GOGC": 0
     },
     "Nodes": [
         {
