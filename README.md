@@ -8,11 +8,39 @@ A v2board backend base on moddified xray-core.
 
 ### 一键安装
 
+仅适用于非 Docker 裸机安装：
+
 ```
 wget -N https://raw.githubusercontent.com/keli-123456/kelinode/main/script/install.sh && bash install.sh
 ```
 
 安装脚本和 `v2node generate` 现在默认生成 `/etc/v2node/config.yml`，并在覆盖旧配置前自动备份已有的 `config.json` / `config.yml` / `config.yaml`。
+
+### Docker 部署
+
+推荐直接使用镜像：
+
+```bash
+docker run -d --name v2node \
+  --restart unless-stopped \
+  --network host \
+  -v /opt/v2node:/etc/v2node \
+  -e V2NODE_API_HOST="https://panel.example.com" \
+  -e V2NODE_NODE_ID="1" \
+  -e V2NODE_API_KEY="your-node-token" \
+  -e V2NODE_NODE_CONFIG_DIR="/etc/v2node" \
+  -e V2NODE_HEALTH_PORT="65530" \
+  -e V2NODE_GOMEMLIMIT="512MiB" \
+  -e V2NODE_GOGC="100" \
+  ghcr.io/keli-123456/v2node:main
+```
+
+说明：
+
+- 未显式指定 `V2NODE_CONFIG_PATH` 时，容器入口默认使用 `/etc/v2node/config.yml`
+- 如果 `/etc/v2node/config.yml` 不存在，会根据环境变量自动生成 YAML v2 配置
+- 如果目录里只有旧 `/etc/v2node/config.json`，仍会自动兼容加载
+- 建议挂载 `/etc/v2node`，避免重建容器后丢失生成的配置、证书和本地状态文件
 
 ## 构建
 ``` bash
