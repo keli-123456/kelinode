@@ -1,10 +1,10 @@
 #!/bin/sh
 set -eu
 
-CONFIG_PATH="${V2NODE_CONFIG_PATH:-/etc/v2node/config.json}"
-if [ "$CONFIG_PATH" = "/etc/v2node/config.json" ] && [ ! -f "$CONFIG_PATH" ]; then
-	if [ -f /etc/v2node/config.yml ]; then
-		CONFIG_PATH="/etc/v2node/config.yml"
+CONFIG_PATH="${V2NODE_CONFIG_PATH:-/etc/v2node/config.yml}"
+if [ "$CONFIG_PATH" = "/etc/v2node/config.yml" ] && [ ! -f "$CONFIG_PATH" ]; then
+	if [ -f /etc/v2node/config.json ]; then
+		CONFIG_PATH="/etc/v2node/config.json"
 	elif [ -f /etc/v2node/config.yaml ]; then
 		CONFIG_PATH="/etc/v2node/config.yaml"
 	fi
@@ -41,12 +41,17 @@ json_escape() {
 	printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/\"/\\\"/g'
 }
 
+yaml_escape() {
+	printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/\"/\\"/g'
+}
+
 load_panel_env_from_config() {
-	if [ -z "$API_HOST" ] || [ -z "$NODE_ID" ] || [ -z "$API_KEY" ]; then
+	if [ -z "$API_HOST" ] || [ -z "$NODE_ID" ] || [ -z "$API_KEY" ] || [ -z "$NODE_CONFIG_DIR" ]; then
 		if command -v jq >/dev/null 2>&1 && printf '%s' "$CONFIG_PATH" | grep -Eq '\.json$'; then
 			API_HOST="${API_HOST:-$(jq -r '.Nodes[0].ApiHost // empty' "$CONFIG_PATH" 2>/dev/null || true)}"
 			NODE_ID="${NODE_ID:-$(jq -r '.Nodes[0].NodeID // empty' "$CONFIG_PATH" 2>/dev/null || true)}"
 			API_KEY="${API_KEY:-$(jq -r '.Nodes[0].ApiKey // empty' "$CONFIG_PATH" 2>/dev/null || true)}"
+			NODE_CONFIG_DIR="${NODE_CONFIG_DIR:-$(jq -r '.Nodes[0].ConfigDir // empty' "$CONFIG_PATH" 2>/dev/null || true)}"
 		elif [ -f "$CONFIG_PATH" ]; then
 			panel_values="$(awk '
 				function trim(s) {
@@ -79,11 +84,23 @@ load_panel_env_from_config() {
 						panel_node_id=trim(value)
 					}
 				}
-				section=="nodes" {
-					if ($0 ~ /^[[:space:]]*-[[:space:]]*node_id:[[:space:]]*/ && first_node_id == "") {
+				section=="kernel" {
+					if ($0 ~ /^[[:space:]]+config_dir:[[:space:]]*/ && kernel_config_dir == "") {
 						value=$0
-						sub(/.*node_id:[[:space:]]*/, "", value)
-						first_node_id=trim(value)
+						sub(/^[^:]*:[[:space:]]*/, "", value)
+						kernel_config_dir=trim(value)
+					}
+				}
+				section=="nodes" {
+					if ($0 ~ /^[[:space:]]*-[[:space:]]*node_id:[[:space:]]*/) {
+						if (first_node_id == "") {
+							value=$0
+							sub(/.*node_id:[[:space:]]*/, "", value)
+							first_node_id=trim(value)
+							in_first_node=1
+						} else {
+							in_first_node=0
+						}
 					}
 					if ($0 ~ /^[[:space:]]+url:[[:space:]]*/ && node_url == "") {
 						value=$0
@@ -95,9 +112,14 @@ load_panel_env_from_config() {
 						sub(/^[^:]*:[[:space:]]*/, "", value)
 						node_token=trim(value)
 					}
+					if (in_first_node && $0 ~ /^[[:space:]]+config_dir:[[:space:]]*/ && first_node_config_dir == "") {
+						value=$0
+						sub(/^[^:]*:[[:space:]]*/, "", value)
+						first_node_config_dir=trim(value)
+					}
 				}
 				END {
-					printf "%s|%s|%s|%s|%s|%s\n", panel_url, panel_token, panel_node_id, first_node_id, node_url, node_token
+					printf "%s|%s|%s|%s|%s|%s|%s|%s\n", panel_url, panel_token, panel_node_id, first_node_id, node_url, node_token, kernel_config_dir, first_node_config_dir
 				}
 			' "$CONFIG_PATH")"
 			panel_url="$(printf '%s' "$panel_values" | cut -d'|' -f1)"
@@ -106,9 +128,12 @@ load_panel_env_from_config() {
 			first_node_id="$(printf '%s' "$panel_values" | cut -d'|' -f4)"
 			first_node_url="$(printf '%s' "$panel_values" | cut -d'|' -f5)"
 			first_node_token="$(printf '%s' "$panel_values" | cut -d'|' -f6)"
+			kernel_config_dir="$(printf '%s' "$panel_values" | cut -d'|' -f7)"
+			first_node_config_dir="$(printf '%s' "$panel_values" | cut -d'|' -f8)"
 			API_HOST="${API_HOST:-${panel_url:-$first_node_url}}"
 			API_KEY="${API_KEY:-${panel_token:-$first_node_token}}"
 			NODE_ID="${NODE_ID:-${panel_node_id:-$first_node_id}}"
+			NODE_CONFIG_DIR="${NODE_CONFIG_DIR:-${first_node_config_dir:-$kernel_config_dir}}"
 		fi
 	fi
 }
@@ -169,10 +194,12 @@ maybe_download_tls_files() {
 		return 0
 	fi
 	if [ -z "$cert_file" ]; then
-		cert_file="/etc/v2node/${protocol}${NODE_ID}.cer"
+		cert_base_dir="${NODE_CONFIG_DIR:-/etc/v2node}"
+		cert_file="${cert_base_dir%/}/${protocol}${NODE_ID}.cer"
 	fi
 	if [ -z "$key_file" ]; then
-		key_file="/etc/v2node/${protocol}${NODE_ID}.key"
+		cert_base_dir="${NODE_CONFIG_DIR:-/etc/v2node}"
+		key_file="${cert_base_dir%/}/${protocol}${NODE_ID}.key"
 	fi
 
 	download_to_path "$TLS_CERT_URL" "$cert_file" 0644
@@ -213,35 +240,71 @@ maybe_download_geo_assets() {
 generate_config_from_env() {
 	api_host_escaped="$(json_escape "$API_HOST")"
 	api_key_escaped="$(json_escape "$API_KEY")"
-	node_config_dir_escaped="$(json_escape "$NODE_CONFIG_DIR")"
+	normalized_node_config_dir="${NODE_CONFIG_DIR:-/etc/v2node}"
+	node_config_dir_escaped="$(json_escape "$normalized_node_config_dir")"
+	node_config_dir_yaml_escaped="$(yaml_escape "$normalized_node_config_dir")"
 	runtime_gomemlimit_escaped="$(json_escape "$RUNTIME_GOMEMLIMIT")"
+	runtime_gomemlimit_yaml_escaped="$(yaml_escape "$RUNTIME_GOMEMLIMIT")"
+	log_level_yaml_escaped="$(yaml_escape "$LOG_LEVEL")"
+	core_log_level_yaml_escaped="$(yaml_escape "$CORE_LOG_LEVEL")"
+	api_host_yaml_escaped="$(yaml_escape "$API_HOST")"
+	api_key_yaml_escaped="$(yaml_escape "$API_KEY")"
 
 	mkdir -p "$(dirname "$CONFIG_PATH")"
-	cat >"$CONFIG_PATH" <<-EOF
-	{
-	  "PprofPort": ${PPROF_PORT},
-	  "HealthPort": ${HEALTH_PORT},
-	  "Log": {
-	    "Level": "${LOG_LEVEL}",
-	    "CoreLevel": "${CORE_LOG_LEVEL}",
-	    "Output": "",
-	    "Access": "none"
-	  },
-	  "Runtime": {
-	    "GoMemLimit": "${runtime_gomemlimit_escaped}",
-	    "GOGC": ${RUNTIME_GOGC}
-	  },
-	  "Nodes": [
-	    {
-	      "ApiHost": "${api_host_escaped}",
-	      "NodeID": ${NODE_ID},
-	      "ApiKey": "${api_key_escaped}",
-	      "Timeout": ${TIMEOUT},
-	      "ConfigDir": "${node_config_dir_escaped}"
-	    }
-	  ]
-	}
-	EOF
+	case "$CONFIG_PATH" in
+		*.json)
+			cat >"$CONFIG_PATH" <<-EOF
+			{
+			  "PprofPort": ${PPROF_PORT},
+			  "HealthPort": ${HEALTH_PORT},
+			  "Log": {
+			    "Level": "${LOG_LEVEL}",
+			    "CoreLevel": "${CORE_LOG_LEVEL}",
+			    "Output": "",
+			    "Access": "none"
+			  },
+			  "Runtime": {
+			    "GoMemLimit": "${runtime_gomemlimit_escaped}",
+			    "GOGC": ${RUNTIME_GOGC}
+			  },
+			  "Nodes": [
+			    {
+			      "ApiHost": "${api_host_escaped}",
+			      "NodeID": ${NODE_ID},
+			      "ApiKey": "${api_key_escaped}",
+			      "Timeout": ${TIMEOUT},
+			      "ConfigDir": "${node_config_dir_escaped}"
+			    }
+			  ]
+			}
+			EOF
+			;;
+		*)
+			cat >"$CONFIG_PATH" <<-EOF
+			panel:
+			  url: "${api_host_yaml_escaped}"
+			  token: "${api_key_yaml_escaped}"
+			  node_id: ${NODE_ID}
+			  timeout: ${TIMEOUT}
+
+			kernel:
+			  config_dir: "${node_config_dir_yaml_escaped}"
+			  log_level: "${core_log_level_yaml_escaped}"
+
+			log:
+			  level: "${log_level_yaml_escaped}"
+			  output: ""
+			  access: "none"
+
+			runtime:
+			  gomemlimit: "${runtime_gomemlimit_yaml_escaped}"
+			  gogc: ${RUNTIME_GOGC}
+
+			health_port: ${HEALTH_PORT}
+			pprof_port: ${PPROF_PORT}
+			EOF
+			;;
+	esac
 }
 
 ensure_config_for_server() {

@@ -224,28 +224,29 @@ generate_v2node_config() {
         local api_key="$3"
 
         mkdir -p /etc/v2node >/dev/null 2>&1
-        cat > /etc/v2node/config.json <<EOF
-{
-    "HealthPort": 0,
-    "Log": {
-        "Level": "warning",
-        "Output": "",
-        "Access": "none"
-    },
-    "Runtime": {
-        "GoMemLimit": "",
-        "GOGC": 0
-    },
-    "Nodes": [
-        {
-            "ApiHost": "${api_host}",
-            "NodeID": ${node_id},
-            "ApiKey": "${api_key}",
-            "Timeout": 15,
-            "ConfigDir": "/etc/v2node"
-        }
-    ]
-}
+        backup_existing_configs
+        cat > /etc/v2node/config.yml <<EOF
+panel:
+  url: "${api_host}"
+  token: "${api_key}"
+  node_id: ${node_id}
+  timeout: 15
+
+kernel:
+  config_dir: "/etc/v2node"
+  log_level: "warning"
+
+log:
+  level: "warning"
+  output: ""
+  access: "none"
+
+runtime:
+  gomemlimit: ""
+  gogc: 0
+
+health_port: 0
+pprof_port: 0
 EOF
         echo -e "${green}V2node 配置文件生成完成,正在重新启动服务${plain}"
         if [[ x"${release}" == x"alpine" ]]; then
@@ -261,6 +262,44 @@ EOF
         else
             echo -e "${red}v2node 可能启动失败，请使用 v2node log 查看日志信息${plain}"
         fi
+}
+
+backup_existing_configs() {
+    local now
+    now=$(date +%Y%m%d%H%M%S)
+    for config_file in /etc/v2node/config.json /etc/v2node/config.yml /etc/v2node/config.yaml; do
+        if [[ -f "$config_file" ]]; then
+            mv -f "$config_file" "${config_file}.bak.${now}"
+            echo -e "${yellow}已备份旧配置: ${config_file}.bak.${now}${plain}"
+        fi
+    done
+}
+
+write_default_v2node_config() {
+    mkdir -p /etc/v2node >/dev/null 2>&1
+    cat > /etc/v2node/config.yml <<'EOF'
+panel:
+  url: "https://example.com/"
+  token: "your-node-token"
+  node_id: 1
+  timeout: 15
+
+kernel:
+  config_dir: "/etc/v2node"
+  log_level: "warning"
+
+log:
+  level: "warning"
+  output: ""
+  access: "none"
+
+runtime:
+  gomemlimit: ""
+  gogc: 0
+
+health_port: 0
+pprof_port: 0
+EOF
 }
 
 install_v2node() {
@@ -357,10 +396,10 @@ EOF
         # 如果通过 CLI 传入了完整参数，则直接生成配置并跳过交互
         if [[ -n "$API_HOST_ARG" && -n "$NODE_ID_ARG" && -n "$API_KEY_ARG" ]]; then
             generate_v2node_config "$API_HOST_ARG" "$NODE_ID_ARG" "$API_KEY_ARG"
-            echo -e "${green}已根据参数生成 /etc/v2node/config.json${plain}"
+            echo -e "${green}已根据参数生成 /etc/v2node/config.yml${plain}"
             first_install=false
         else
-            cp config.json /etc/v2node/
+            write_default_v2node_config
             first_install=true
         fi
     else
@@ -407,7 +446,7 @@ EOF
     curl -fsS --max-time 10 "https://api.v-50.me/counter" || true
 
     if [[ $first_install == true ]]; then
-        read -rp "检测到你为第一次安装 v2node，是否自动生成 /etc/v2node/config.json？(y/n): " if_generate
+        read -rp "检测到你为第一次安装 v2node，是否自动生成 /etc/v2node/config.yml？(y/n): " if_generate
         if [[ "$if_generate" =~ ^[Yy]$ ]]; then
             # 交互式收集参数，提供示例默认值
             read -rp "面板API地址[格式: https://example.com/]: " api_host
