@@ -14,6 +14,7 @@ import (
 	panel "github.com/keli-123456/kelinode/api/v2board"
 	"github.com/keli-123456/kelinode/conf"
 	v2core "github.com/keli-123456/kelinode/core"
+	"github.com/keli-123456/kelinode/limiter"
 )
 
 func TestExecuteNodeConfigCheckSignalsReloadOnConfigChange(t *testing.T) {
@@ -225,6 +226,209 @@ func TestLoadAndSyncUsersFallsBackToFullListWhenDeltaUnsupported(t *testing.T) {
 		t.Fatalf("expected user delta support to be disabled after 404 fallback")
 	}
 	assertUserUUIDs(t, users, []string{"user-a", "user-b"})
+}
+
+func TestExecuteNodeUserSyncAppliesDeltaSideEffects(t *testing.T) {
+	t.Parallel()
+
+	nodeConf := &conf.NodeConfig{
+		APIHost:   "https://panel.example.com",
+		NodeID:    9,
+		Key:       "test-token",
+		Timeout:   5,
+		ConfigDir: t.TempDir(),
+	}
+	client := newTestPanelClient(t, 9, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/api/v1/server/UniProxy/user_delta":
+			return jsonResponse(t, req, http.StatusOK, map[string]any{
+				"full":     false,
+				"revision": 11,
+				"deleted": []map[string]any{
+					{"id": 2, "uuid": "user-delete", "speed_limit": 10, "device_limit": 1},
+				},
+				"upsert": []map[string]any{
+					{"id": 3, "uuid": "user-update", "speed_limit": 20, "device_limit": 2},
+					{"id": 4, "uuid": "user-add", "speed_limit": 30, "device_limit": 3},
+				},
+			}), nil
+		case "/api/v1/server/UniProxy/alivelist":
+			return jsonResponse(t, req, http.StatusOK, map[string]any{
+				"alive": map[string]int{
+					"1": 1,
+					"3": 2,
+					"4": 1,
+				},
+			}), nil
+		default:
+			return jsonResponse(t, req, http.StatusNotFound, map[string]any{"message": "not found"}), nil
+		}
+	}))
+
+	limiter.Init()
+	initialUsers := []panel.UserInfo{
+		{Id: 1, Uuid: "user-keep", SpeedLimit: 10, DeviceLimit: 1},
+		{Id: 2, Uuid: "user-delete", SpeedLimit: 10, DeviceLimit: 1},
+		{Id: 3, Uuid: "user-update", SpeedLimit: 10, DeviceLimit: 1},
+	}
+	l := limiter.AddLimiter("test-tag", initialUsers, map[int]int{1: 1, 2: 1, 3: 1})
+	t.Cleanup(func() { limiter.DeleteLimiter("test-tag") })
+
+	var (
+		gotUpdated []panel.UserInfo
+		gotDeleted []panel.UserInfo
+		gotAdded   []panel.UserInfo
+	)
+
+	controller := NewController(client, nodeConf, &panel.NodeInfo{
+		Type: "hysteria2",
+		Common: &panel.CommonNode{
+			BaseConfig: &panel.BaseConfig{},
+		},
+	}, conf.RealtimeConfig{})
+	controller.tag = "test-tag"
+	controller.limiter = l
+	controller.userList = append([]panel.UserInfo(nil), initialUsers...)
+	controller.userRevision = 10
+	controller.updateUserIDsFn = func(tag string, updated []panel.UserInfo) error {
+		gotUpdated = append([]panel.UserInfo(nil), updated...)
+		return nil
+	}
+	controller.delUsersFn = func(ctx context.Context, deleted []panel.UserInfo, tag string) error {
+		gotDeleted = append([]panel.UserInfo(nil), deleted...)
+		return nil
+	}
+	controller.addUsersFn = func(ctx context.Context, params *v2core.AddUsersParams) (int, error) {
+		gotAdded = append([]panel.UserInfo(nil), params.Users...)
+		return len(params.Users), nil
+	}
+
+	summary, err := controller.executeNodeUserSync(context.Background())
+	if err != nil {
+		t.Fatalf("execute node user sync failed: %v", err)
+	}
+
+	if got, want := summary, (userSyncSummary{Deleted: 1, Added: 1, Updated: 1}); got != want {
+		t.Fatalf("unexpected user sync summary: got %+v want %+v", got, want)
+	}
+	if got, want := controller.userRevision, int64(11); got != want {
+		t.Fatalf("unexpected user revision: got %d want %d", got, want)
+	}
+	assertUserUUIDs(t, controller.userList, []string{"user-add", "user-keep", "user-update"})
+	assertUserUUIDs(t, gotUpdated, []string{"user-update"})
+	assertUserUUIDs(t, gotDeleted, []string{"user-delete"})
+	assertUserUUIDs(t, gotAdded, []string{"user-add"})
+
+	if got := controller.limiter.UUIDtoUID["user-add"]; got != 4 {
+		t.Fatalf("expected limiter to include added user id 4, got %d", got)
+	}
+	if got := controller.limiter.UUIDtoUID["user-update"]; got != 3 {
+		t.Fatalf("expected limiter to keep updated user id 3, got %d", got)
+	}
+	if _, ok := controller.limiter.UUIDtoUID["user-delete"]; ok {
+		t.Fatalf("expected deleted user to be removed from limiter")
+	}
+	value, ok := controller.limiter.UserLimitInfo.Load("test-tag|user-update")
+	if !ok {
+		t.Fatalf("expected limiter user info for updated user")
+	}
+	info := value.(*limiter.UserLimitInfo)
+	if got, want := info.SpeedLimit, 20; got != want {
+		t.Fatalf("unexpected updated speed limit: got %d want %d", got, want)
+	}
+	if got, want := info.DeviceLimit, 2; got != want {
+		t.Fatalf("unexpected updated device limit: got %d want %d", got, want)
+	}
+}
+
+func TestExecuteNodeUserSyncFallsBackToFullList(t *testing.T) {
+	t.Parallel()
+
+	nodeConf := &conf.NodeConfig{
+		APIHost:   "https://panel.example.com",
+		NodeID:    10,
+		Key:       "test-token",
+		Timeout:   5,
+		ConfigDir: t.TempDir(),
+	}
+	client := newTestPanelClient(t, 10, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/api/v1/server/UniProxy/user_delta":
+			return jsonResponse(t, req, http.StatusNotFound, map[string]any{"message": "not found"}), nil
+		case "/api/v1/server/UniProxy/user":
+			return jsonResponse(t, req, http.StatusOK, map[string]any{
+				"users": []map[string]any{
+					{"id": 1, "uuid": "user-keep", "speed_limit": 10, "device_limit": 1},
+					{"id": 3, "uuid": "user-update", "speed_limit": 50, "device_limit": 5},
+					{"id": 4, "uuid": "user-add", "speed_limit": 40, "device_limit": 4},
+				},
+			}), nil
+		case "/api/v1/server/UniProxy/alivelist":
+			return jsonResponse(t, req, http.StatusOK, map[string]any{
+				"alive": map[string]int{
+					"1": 1,
+					"3": 1,
+					"4": 1,
+				},
+			}), nil
+		default:
+			return jsonResponse(t, req, http.StatusNotFound, map[string]any{"message": "not found"}), nil
+		}
+	}))
+
+	limiter.Init()
+	initialUsers := []panel.UserInfo{
+		{Id: 1, Uuid: "user-keep", SpeedLimit: 10, DeviceLimit: 1},
+		{Id: 2, Uuid: "user-delete", SpeedLimit: 10, DeviceLimit: 1},
+		{Id: 3, Uuid: "user-update", SpeedLimit: 10, DeviceLimit: 1},
+	}
+	l := limiter.AddLimiter("fallback-tag", initialUsers, map[int]int{1: 1, 2: 1, 3: 1})
+	t.Cleanup(func() { limiter.DeleteLimiter("fallback-tag") })
+
+	var (
+		gotUpdated []panel.UserInfo
+		gotDeleted []panel.UserInfo
+		gotAdded   []panel.UserInfo
+	)
+
+	controller := NewController(client, nodeConf, &panel.NodeInfo{
+		Type: "hysteria2",
+		Common: &panel.CommonNode{
+			BaseConfig: &panel.BaseConfig{},
+		},
+	}, conf.RealtimeConfig{})
+	controller.tag = "fallback-tag"
+	controller.limiter = l
+	controller.userList = append([]panel.UserInfo(nil), initialUsers...)
+	controller.userDeltaSupported = true
+	controller.updateUserIDsFn = func(tag string, updated []panel.UserInfo) error {
+		gotUpdated = append([]panel.UserInfo(nil), updated...)
+		return nil
+	}
+	controller.delUsersFn = func(ctx context.Context, deleted []panel.UserInfo, tag string) error {
+		gotDeleted = append([]panel.UserInfo(nil), deleted...)
+		return nil
+	}
+	controller.addUsersFn = func(ctx context.Context, params *v2core.AddUsersParams) (int, error) {
+		gotAdded = append([]panel.UserInfo(nil), params.Users...)
+		return len(params.Users), nil
+	}
+
+	summary, err := controller.executeNodeUserSync(context.Background())
+	if err != nil {
+		t.Fatalf("execute node user sync failed: %v", err)
+	}
+
+	if controller.userDeltaSupported {
+		t.Fatalf("expected user delta support to be disabled after fallback")
+	}
+	if got, want := summary, (userSyncSummary{Deleted: 1, Added: 1, Updated: 1}); got != want {
+		t.Fatalf("unexpected user sync summary: got %+v want %+v", got, want)
+	}
+	assertUserUUIDs(t, controller.userList, []string{"user-add", "user-keep", "user-update"})
+	assertUserUUIDs(t, gotUpdated, []string{"user-update"})
+	assertUserUUIDs(t, gotDeleted, []string{"user-delete"})
+	assertUserUUIDs(t, gotAdded, []string{"user-add"})
 }
 
 func TestUserSyncStatePathUsesConfigDir(t *testing.T) {

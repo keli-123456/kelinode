@@ -208,14 +208,13 @@ func (c *Controller) executeNodeUserSync(ctx context.Context) (userSyncSummary, 
 		c.limiter.SetAliveList(newA)
 	}
 	if len(updated) > 0 {
-		c.limiter.UpdateUserInfo(c.tag, updated)
-		if err := c.server.UpdateUserIDs(c.tag, updated); err != nil {
+		if err := c.applyUpdatedUsers(updated); err != nil {
 			return summary, err
 		}
 	}
 	if len(deleted) > 0 {
 		// have deleted users
-		err = c.server.DelUsers(ctx, deleted, c.tag)
+		err = c.applyDeletedUsers(ctx, deleted)
 		if err != nil {
 			if ctx.Err() != nil {
 				return summary, nil
@@ -225,11 +224,7 @@ func (c *Controller) executeNodeUserSync(ctx context.Context) (userSyncSummary, 
 	}
 	if len(added) > 0 {
 		// have added users
-		_, err = c.server.AddUsersWithContext(ctx, &vCore.AddUsersParams{
-			Tag:      c.tag,
-			NodeInfo: c.info,
-			Users:    added,
-		})
+		err = c.applyAddedUsers(ctx, added)
 		if err != nil {
 			if ctx.Err() != nil {
 				return summary, nil
@@ -247,4 +242,33 @@ func (c *Controller) executeNodeUserSync(ctx context.Context) (userSyncSummary, 
 		Updated: len(updated),
 	}
 	return summary, nil
+}
+
+func (c *Controller) applyUpdatedUsers(updated []panel.UserInfo) error {
+	c.limiter.UpdateUserInfo(c.tag, updated)
+	if c.updateUserIDsFn != nil {
+		return c.updateUserIDsFn(c.tag, updated)
+	}
+	return c.server.UpdateUserIDs(c.tag, updated)
+}
+
+func (c *Controller) applyDeletedUsers(ctx context.Context, deleted []panel.UserInfo) error {
+	if c.delUsersFn != nil {
+		return c.delUsersFn(ctx, deleted, c.tag)
+	}
+	return c.server.DelUsers(ctx, deleted, c.tag)
+}
+
+func (c *Controller) applyAddedUsers(ctx context.Context, added []panel.UserInfo) error {
+	params := &vCore.AddUsersParams{
+		Tag:      c.tag,
+		NodeInfo: c.info,
+		Users:    added,
+	}
+	if c.addUsersFn != nil {
+		_, err := c.addUsersFn(ctx, params)
+		return err
+	}
+	_, err := c.server.AddUsersWithContext(ctx, params)
+	return err
 }

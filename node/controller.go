@@ -39,6 +39,9 @@ type Controller struct {
 	realtimeUserCh            chan realtimeMessage
 	executeConfigCheckFn      func(context.Context) (bool, error)
 	executeUserSyncFn         func(context.Context) (userSyncSummary, error)
+	updateUserIDsFn           func(string, []panel.UserInfo) error
+	delUsersFn                func(context.Context, []panel.UserInfo, string) error
+	addUsersFn                func(context.Context, *core.AddUsersParams) (int, error)
 }
 
 // NewController return a Node controller with default parameters.
