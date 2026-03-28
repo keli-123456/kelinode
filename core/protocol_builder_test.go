@@ -1,15 +1,29 @@
 package core
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
+	"math/big"
+	"os"
 	"testing"
+	"time"
 
 	panel "github.com/keli-123456/kelinode/api/v2board"
 	"github.com/keli-123456/kelinode/common/format"
+	"github.com/xtls/xray-core/app/proxyman"
 	coreConf "github.com/xtls/xray-core/infra/conf"
 	"github.com/xtls/xray-core/proxy/anytls"
+	hyproxy "github.com/xtls/xray-core/proxy/hysteria"
 	hyaccount "github.com/xtls/xray-core/proxy/hysteria/account"
 	"github.com/xtls/xray-core/proxy/tuic"
+	hytransport "github.com/xtls/xray-core/transport/internet/hysteria"
+	tlscfg "github.com/xtls/xray-core/transport/internet/tls"
+	websocketcfg "github.com/xtls/xray-core/transport/internet/websocket"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestBuildHysteria2Config(t *testing.T) {
@@ -255,4 +269,223 @@ func TestBuildAnyTLSUserAccount(t *testing.T) {
 	if got, want := account.Password, "anytls-user"; got != want {
 		t.Fatalf("unexpected anytls password: got %q want %q", got, want)
 	}
+}
+
+func TestBuildInboundHysteria2WithTLS(t *testing.T) {
+	t.Parallel()
+
+	certFile, keyFile := writeTestCertificateFiles(t)
+	nodeInfo := &panel.NodeInfo{
+		Type:     "hysteria2",
+		Security: panel.Tls,
+		Common: &panel.CommonNode{
+			ListenIP:   "0.0.0.0",
+			ServerPort: 443,
+			UpMbps:     100,
+			DownMbps:   200,
+			CertInfo: &panel.CertInfo{
+				CertMode:         "file",
+				CertFile:         certFile,
+				KeyFile:          keyFile,
+				RejectUnknownSni: true,
+			},
+		},
+	}
+
+	config, err := buildInbound(nodeInfo, "hysteria-inbound")
+	if err != nil {
+		t.Fatalf("build inbound failed: %v", err)
+	}
+
+	if got, want := config.Tag, "hysteria-inbound"; got != want {
+		t.Fatalf("unexpected inbound tag: got %q want %q", got, want)
+	}
+
+	receiver := decodeTypedMessage[*proxyman.ReceiverConfig](t, config.ReceiverSettings)
+	if got, want := receiver.GetPortList().Range[0].From, uint32(443); got != want {
+		t.Fatalf("unexpected receiver port: got %d want %d", got, want)
+	}
+	if got, want := receiver.GetStreamSettings().GetProtocolName(), "hysteria"; got != want {
+		t.Fatalf("unexpected stream protocol: got %q want %q", got, want)
+	}
+	if got := receiver.GetStreamSettings().GetQuicParams(); got == nil {
+		t.Fatalf("expected quic params to be configured")
+	}
+	if got, want := receiver.GetStreamSettings().GetQuicParams().GetCongestion(), "force-brutal"; got != want {
+		t.Fatalf("unexpected quic congestion: got %q want %q", got, want)
+	}
+
+	if got := receiver.GetStreamSettings().GetSecuritySettings(); len(got) != 1 {
+		t.Fatalf("unexpected security settings count: got %d want 1", len(got))
+	}
+	tlsConfig := decodeTypedMessage[*tlscfg.Config](t, receiver.GetStreamSettings().GetSecuritySettings()[0])
+	if got, want := tlsConfig.GetNextProtocol(), []string{"h3"}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("unexpected tls alpn: got %v want %v", got, want)
+	}
+	if !tlsConfig.GetRejectUnknownSni() {
+		t.Fatalf("expected reject unknown sni to be enabled")
+	}
+
+	hysteriaTransport := decodeTypedMessage[*hytransport.Config](t, receiver.GetStreamSettings().GetTransportSettings()[0].GetSettings())
+	if got, want := hysteriaTransport.GetVersion(), int32(2); got != want {
+		t.Fatalf("unexpected hysteria transport version: got %d want %d", got, want)
+	}
+
+	proxyConfig := decodeTypedMessage[*hyproxy.ServerConfig](t, config.ProxySettings)
+	if got := len(proxyConfig.GetUsers()); got != 0 {
+		t.Fatalf("expected empty hysteria users in inbound build, got %d", got)
+	}
+}
+
+func TestBuildInboundTuicWithTLS(t *testing.T) {
+	t.Parallel()
+
+	certFile, keyFile := writeTestCertificateFiles(t)
+	nodeInfo := &panel.NodeInfo{
+		Type:     "tuic",
+		Security: panel.Tls,
+		Common: &panel.CommonNode{
+			ListenIP:          "0.0.0.0",
+			ServerPort:        8443,
+			CongestionControl: "bbr",
+			ZeroRTTHandshake:  true,
+			CertInfo: &panel.CertInfo{
+				CertMode: "file",
+				CertFile: certFile,
+				KeyFile:  keyFile,
+			},
+		},
+	}
+
+	config, err := buildInbound(nodeInfo, "tuic-inbound")
+	if err != nil {
+		t.Fatalf("build inbound failed: %v", err)
+	}
+
+	receiver := decodeTypedMessage[*proxyman.ReceiverConfig](t, config.ReceiverSettings)
+	if got, want := receiver.GetStreamSettings().GetProtocolName(), "tuic"; got != want {
+		t.Fatalf("unexpected stream protocol: got %q want %q", got, want)
+	}
+	if got := receiver.GetStreamSettings().GetSecuritySettings(); len(got) != 1 {
+		t.Fatalf("unexpected security settings count: got %d want 1", len(got))
+	}
+	tlsConfig := decodeTypedMessage[*tlscfg.Config](t, receiver.GetStreamSettings().GetSecuritySettings()[0])
+	if got, want := tlsConfig.GetNextProtocol(), []string{"h3"}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("unexpected tls alpn: got %v want %v", got, want)
+	}
+
+	proxyConfig := decodeTypedMessage[*tuic.ServerConfig](t, config.ProxySettings)
+	if got, want := proxyConfig.GetCongestionControl(), "bbr"; got != want {
+		t.Fatalf("unexpected tuic congestion: got %q want %q", got, want)
+	}
+	if !proxyConfig.GetZeroRttHandshake() {
+		t.Fatalf("expected zero rtt handshake to be enabled")
+	}
+}
+
+func TestBuildInboundAnyTLSWebSocket(t *testing.T) {
+	t.Parallel()
+
+	certFile, keyFile := writeTestCertificateFiles(t)
+	nodeInfo := &panel.NodeInfo{
+		Type:     "anytls",
+		Security: panel.Tls,
+		Common: &panel.CommonNode{
+			ListenIP:        "0.0.0.0",
+			ServerPort:      9443,
+			Network:         "ws",
+			NetworkSettings: json.RawMessage(`{"host":"edge.example.com","path":"/ws"}`),
+			PaddingScheme:   []string{"stop=8", "max=900"},
+			CertInfo: &panel.CertInfo{
+				CertMode: "file",
+				CertFile: certFile,
+				KeyFile:  keyFile,
+			},
+		},
+	}
+
+	config, err := buildInbound(nodeInfo, "anytls-inbound")
+	if err != nil {
+		t.Fatalf("build inbound failed: %v", err)
+	}
+
+	receiver := decodeTypedMessage[*proxyman.ReceiverConfig](t, config.ReceiverSettings)
+	if got, want := receiver.GetStreamSettings().GetProtocolName(), "websocket"; got != want {
+		t.Fatalf("unexpected stream protocol: got %q want %q", got, want)
+	}
+	transports := receiver.GetStreamSettings().GetTransportSettings()
+	if got := len(transports); got != 1 {
+		t.Fatalf("unexpected transport settings count: got %d want 1", got)
+	}
+	if got, want := transports[0].GetProtocolName(), "websocket"; got != want {
+		t.Fatalf("unexpected transport config protocol: got %q want %q", got, want)
+	}
+	wsConfig := decodeTypedMessage[*websocketcfg.Config](t, transports[0].GetSettings())
+	if got, want := wsConfig.GetHost(), "edge.example.com"; got != want {
+		t.Fatalf("unexpected websocket host: got %q want %q", got, want)
+	}
+	if got, want := wsConfig.GetPath(), "/ws"; got != want {
+		t.Fatalf("unexpected websocket path: got %q want %q", got, want)
+	}
+
+	proxyConfig := decodeTypedMessage[*anytls.ServerConfig](t, config.ProxySettings)
+	if got, want := proxyConfig.GetPaddingScheme(), "stop=8\nmax=900"; got != want {
+		t.Fatalf("unexpected anytls padding scheme: got %q want %q", got, want)
+	}
+}
+
+func decodeTypedMessage[T any](t *testing.T, message interface{ GetInstance() (proto.Message, error) }) T {
+	t.Helper()
+
+	instance, err := message.GetInstance()
+	if err != nil {
+		t.Fatalf("decode typed message failed: %v", err)
+	}
+
+	value, ok := instance.(T)
+	if !ok {
+		t.Fatalf("unexpected typed message type: got %T", instance)
+	}
+	return value
+}
+
+func writeTestCertificateFiles(t *testing.T) (string, string) {
+	t.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate rsa key failed: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "node.example.com",
+		},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              []string{"node.example.com"},
+	}
+
+	certificateDER, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		t.Fatalf("create certificate failed: %v", err)
+	}
+
+	dir := t.TempDir()
+	certFile := dir + "/test.crt"
+	keyFile := dir + "/test.key"
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
+	if err := os.WriteFile(certFile, certPEM, 0644); err != nil {
+		t.Fatalf("write certificate failed: %v", err)
+	}
+	if err := os.WriteFile(keyFile, keyPEM, 0600); err != nil {
+		t.Fatalf("write private key failed: %v", err)
+	}
+	return certFile, keyFile
 }
