@@ -4,6 +4,8 @@ A v2board backend base on moddified xray-core.
 
 **注意： 本项目需要搭配[修改版V2board](https://github.com/wyx2685/v2board)**
 
+当前 `main` 已切到 Xray Core 26.x 兼容基线，依赖的是 `wyx2685/xray-core` 的 26.x 适配 fork。
+
 ## 软件安装
 
 ### 一键安装
@@ -46,6 +48,8 @@ docker run -d --name v2node \
 ``` bash
 GOEXPERIMENT=jsonv2 go build -v -o build_assets/v2node -trimpath -ldflags "-X 'github.com/keli-123456/kelinode/cmd.version=$version' -s -w -buildid="
 ```
+
+构建环境建议使用 Go 1.26+。
 
 ## 运行时与健康检查
 
