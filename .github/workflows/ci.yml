@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/codeql-analysis.yml"
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/codeql-analysis.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Test and Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CGO_ENABLED: 0
+      GOEXPERIMENT: jsonv2
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.0"
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run regression suite
+        run: go test ./cmd/... ./node/... ./core/... ./api/v2board/...
+
+      - name: Verify binary build
+        run: go build -v -trimpath -o /tmp/v2node
