@@ -21,8 +21,39 @@ on:
     types: [published]
 
 jobs:
+  verify:
+    name: Verify Regression Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CGO_ENABLED: 0
+      GOEXPERIMENT: jsonv2
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.0'
+          cache: true
+
+      - name: Get project dependencies
+        run: |
+          go mod download
+
+      - name: Run regression suite
+        run: |
+          go test ./cmd/... ./node/... ./core/... ./api/v2board/...
+
+      - name: Verify linux build
+        run: |
+          go build -v -trimpath -o /tmp/v2node-release-check
+
 
   build:
+    needs:
+      - verify
     strategy:
       matrix:
         # Include amd64 on all platforms.
