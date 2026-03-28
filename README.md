@@ -4,7 +4,7 @@ A v2board backend base on moddified xray-core.
 
 **注意： 本项目需要搭配[修改版V2board](https://github.com/wyx2685/v2board)**
 
-当前 `main` 已切到 Xray Core 26.x 兼容基线，依赖的是 `wyx2685/xray-core` 的 26.x 适配 fork。
+当前 `main` 已切到 Xray Core 26.x 兼容基线，依赖的是自有 `keli-core` 26.x 兼容 fork。
 
 ## 软件安装
 
