@@ -19,8 +19,30 @@ import (
 )
 
 var (
-	config string
-	watch  bool
+	config           string
+	watch            bool
+	newNodeForReload = func(nodes []conf.NodeConfig, realtime conf.RealtimeConfig) (*node.Node, error) {
+		return node.New(nodes, realtime)
+	}
+	newCoreForReload   = func(cfg *conf.Conf) *core.V2Core { return core.New(cfg) }
+	startCoreForReload = func(coreInstance *core.V2Core, nodesInstance *node.Node) error {
+		return coreInstance.Start(nodesInstance.NodeInfos)
+	}
+	startNodeForReload = func(nodesInstance *node.Node, nodes []conf.NodeConfig, coreInstance *core.V2Core) error {
+		return nodesInstance.Start(nodes, coreInstance)
+	}
+	closeNodeForReload = func(nodesInstance *node.Node) error {
+		if nodesInstance == nil {
+			return nil
+		}
+		return nodesInstance.Close()
+	}
+	closeCoreForReload = func(coreInstance *core.V2Core) error {
+		if coreInstance == nil {
+			return nil
+		}
+		return coreInstance.Close()
+	}
 )
 
 var serverCommand = cobra.Command{
@@ -155,11 +177,11 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core, health *heal
 		oldReloadCh = (*v2core).ReloadCh
 	}
 
-	if err := (*nodes).Close(); err != nil {
+	if err := closeNodeForReload(*nodes); err != nil {
 		return err
 	}
 
-	if err := (*v2core).Close(); err != nil {
+	if err := closeCoreForReload(*v2core); err != nil {
 		return err
 	}
 
@@ -192,19 +214,19 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core, health *heal
 	}
 	appliedRuntime := applyRuntimeSettings(newConf.RuntimeConfig, runtimeState)
 
-	newNodes, err := node.New(newConf.NodeConfigs, newConf.RealtimeConfig)
+	newNodes, err := newNodeForReload(newConf.NodeConfigs, newConf.RealtimeConfig)
 	if err != nil {
 		return err
 	}
 
-	newCore := core.New(newConf)
+	newCore := newCoreForReload(newConf)
 	// Reattach reload channel
 	newCore.ReloadCh = oldReloadCh
-	if err := newCore.Start(newNodes.NodeInfos); err != nil {
+	if err := startCoreForReload(newCore, newNodes); err != nil {
 		return err
 	}
 
-	if err := newNodes.Start(newConf.NodeConfigs, newCore); err != nil {
+	if err := startNodeForReload(newNodes, newConf.NodeConfigs, newCore); err != nil {
 		return err
 	}
 
