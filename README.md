@@ -44,6 +44,10 @@ docker run -d --name v2node \
 - 如果目录里只有旧 `/etc/v2node/config.json`，仍会自动兼容加载
 - 建议挂载 `/etc/v2node`，避免重建容器后丢失生成的配置、证书和本地状态文件
 
+详细部署说明见：
+
+- [Docker Deployment Guide](./docs/docker-deployment.md)
+
 ## 构建
 ``` bash
 GOEXPERIMENT=jsonv2 go build -v -o build_assets/v2node -trimpath -ldflags "-X 'github.com/keli-123456/kelinode/cmd.version=$version' -s -w -buildid="
