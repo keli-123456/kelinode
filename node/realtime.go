@@ -14,6 +14,21 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+type realtimeWSConn interface {
+	SetWriteDeadline(time.Time) error
+	WriteJSON(v interface{}) error
+	ReadMessage() (messageType int, p []byte, err error)
+	Close() error
+}
+
+var dialRealtimeWS = func(ctx context.Context, rawURL string) (realtimeWSConn, error) {
+	conn, _, err := websocket.DefaultDialer.DialContext(ctx, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
+}
+
 type realtimeMessage struct {
 	Type     string                  `json:"type"`
 	Message  string                  `json:"message,omitempty"`
@@ -113,7 +128,7 @@ func (c *RealtimeClient) connectAndServe() error {
 		return err
 	}
 
-	conn, _, err := websocket.DefaultDialer.DialContext(c.ctx, dialURL, nil)
+	conn, err := dialRealtimeWS(c.ctx, dialURL)
 	if err != nil {
 		return err
 	}
