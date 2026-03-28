@@ -37,6 +37,8 @@ type Controller struct {
 	realtimeCancel            context.CancelFunc
 	realtimeConfigCh          chan realtimeMessage
 	realtimeUserCh            chan realtimeMessage
+	executeConfigCheckFn      func(context.Context) (bool, error)
+	executeUserSyncFn         func(context.Context) (userSyncSummary, error)
 }
 
 // NewController return a Node controller with default parameters.

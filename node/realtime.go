@@ -341,7 +341,7 @@ func (c *Controller) runRealtimeConfigWorker(ctx context.Context) {
 			execCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 			c.sendRealtimeReceipt("config", message, "received", "")
 			c.sendRealtimeReceipt("config", message, "applying", "")
-			changed, err := c.executeNodeConfigCheck(execCtx)
+			changed, err := c.executeRealtimeConfigCheck(execCtx)
 			cancel()
 			if err != nil {
 				c.sendRealtimeReceipt("config", message, "failed", err.Error())
@@ -366,7 +366,7 @@ func (c *Controller) runRealtimeUserWorker(ctx context.Context) {
 			execCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 			c.sendRealtimeReceipt("users", message, "received", "")
 			c.sendRealtimeReceipt("users", message, "applying", "")
-			summary, err := c.executeNodeUserSync(execCtx)
+			summary, err := c.executeRealtimeUserSync(execCtx)
 			cancel()
 			if err != nil {
 				c.sendRealtimeReceipt("users", message, "failed", err.Error())
@@ -376,6 +376,20 @@ func (c *Controller) runRealtimeUserWorker(ctx context.Context) {
 			c.sendRealtimeReceipt("users", message, "applied", formatRealtimeUserSummary(summary))
 		}
 	}
+}
+
+func (c *Controller) executeRealtimeConfigCheck(ctx context.Context) (bool, error) {
+	if c.executeConfigCheckFn != nil {
+		return c.executeConfigCheckFn(ctx)
+	}
+	return c.executeNodeConfigCheck(ctx)
+}
+
+func (c *Controller) executeRealtimeUserSync(ctx context.Context) (userSyncSummary, error) {
+	if c.executeUserSyncFn != nil {
+		return c.executeUserSyncFn(ctx)
+	}
+	return c.executeNodeUserSync(ctx)
 }
 
 func (c *Controller) sendRealtimeReceipt(topic string, source realtimeMessage, status string, message string) {
