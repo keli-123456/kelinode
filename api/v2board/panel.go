@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"net/http"
 	"strconv"
 	"time"
 
@@ -21,6 +22,13 @@ type Client struct {
 	responseBodyHash string
 	UserList         *UserListBody
 	AliveMap         *AliveMap
+}
+
+func (c *Client) SetTransport(transport http.RoundTripper) {
+	if c == nil || c.client == nil || transport == nil {
+		return
+	}
+	c.client.SetTransport(transport)
 }
 
 func New(c *conf.NodeConfig) (*Client, error) {
