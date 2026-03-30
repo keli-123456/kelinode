@@ -12,7 +12,7 @@ require (
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.19.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	github.com/xtls/xray-core v1.260323.0
+	github.com/xtls/xray-core v1.260327.0
 	golang.org/x/sys v0.42.0
 	google.golang.org/protobuf v1.36.11
 )
@@ -231,4 +231,4 @@ require (
 	lukechampine.com/blake3 v1.4.1 // indirect
 )
 
-replace github.com/xtls/xray-core v1.260323.0 => github.com/keli-123456/keli-core v0.0.0-20260328010603-cf3881fd5557
+replace github.com/xtls/xray-core v1.260327.0 => github.com/keli-123456/keli-core v0.0.0-20260330084600-8f394a0cb8dd
