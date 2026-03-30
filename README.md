@@ -47,6 +47,7 @@ docker run -d --name v2node \
 详细部署说明见：
 
 - [Docker Deployment Guide](./docs/docker-deployment.md)
+- [Xray 26.3.27 Upgrade Release Checklist](./docs/release-checklist-xray-26.3.27.md)
 
 ## 构建
 ``` bash
