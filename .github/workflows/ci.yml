@@ -37,6 +37,8 @@ jobs:
     env:
       CGO_ENABLED: 0
       GOEXPERIMENT: jsonv2
+      GOPRIVATE: github.com/keli-123456/*
+      GONOSUMDB: github.com/keli-123456/*
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

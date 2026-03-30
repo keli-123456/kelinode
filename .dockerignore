@@ -1,0 +1,6 @@
+.git
+.github
+.go
+.gocache
+.gomodcache
+build_assets
