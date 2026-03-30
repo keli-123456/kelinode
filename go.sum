@@ -570,8 +570,8 @@ github.com/julienschmidt/httprouter v1.3.0/go.mod h1:JR6WtHb+2LUe8TCKY3cZOxFyyO8
 github.com/jung-kurt/gofpdf v1.0.3-0.20190309125859-24315acbbda5/go.mod h1:7Id9E/uU8ce6rXgefFLlgrJj/GYY22cpxn+r32jIOes=
 github.com/k0kubun/go-ansi v0.0.0-20180517002512-3bf9e2903213 h1:qGQQKEcAR99REcMpsXCp3lJ03zYT1PkRd3kQGPn9GVg=
 github.com/k0kubun/go-ansi v0.0.0-20180517002512-3bf9e2903213/go.mod h1:vNUNkEQ1e29fT/6vq2aBdFsgNPmy8qMdSay1npru+Sw=
-github.com/keli-123456/keli-core v0.0.0-20260330084600-8f394a0cb8dd h1:BxHt0NVpIyz4CLAho0uFAcPzeEcqG6wmTlTUhIxFlc8=
-github.com/keli-123456/keli-core v0.0.0-20260330084600-8f394a0cb8dd/go.mod h1:aSk3wfNldOXbBzQJz2dAHRd+IMj8DwRHWxTEDtIU9ZI=
+github.com/keli-123456/keli-core v0.0.0-20260330004600-8f394a0cb8dd h1:hEqAZkjq2b+Yjs7SBBjAsHoo/lZrVBzaB1qGNkgU6ic=
+github.com/keli-123456/keli-core v0.0.0-20260330004600-8f394a0cb8dd/go.mod h1:/FTj4nCE80VlhGs0v/jN2BJpf6OQWYuR1Qi1My/uBz4=
 github.com/keybase/go-keychain v0.0.1 h1:way+bWYa6lDppZoZcgMbYsvC7GxljxrskdNInRtuthU=
 github.com/keybase/go-keychain v0.0.1/go.mod h1:PdEILRW3i9D8JcdM+FmY6RwkHGnhHxXwkPPMeUgOK1k=
 github.com/kisielk/errcheck v1.1.0/go.mod h1:EZBBE59ingxPouuu3KfxchcWSUPOHkagtvWXihfKN4Q=

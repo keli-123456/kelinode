@@ -36,7 +36,7 @@ GOEXPERIMENT=jsonv2 go test ./...
 Confirm these dependency points before packaging:
 
 - `v2node/go.mod` uses `github.com/xtls/xray-core v1.260327.0`
-- `v2node/go.mod` replace points to `github.com/keli-123456/keli-core v0.0.0-20260330084600-8f394a0cb8dd`
+- `v2node/go.mod` replace points to `github.com/keli-123456/keli-core v0.0.0-20260330004600-8f394a0cb8dd`
 - `v2node/go.sum` contains the matching `keli-core` checksum
 
 ## Deployment
