@@ -271,7 +271,7 @@ func TestExecuteNodeUserSyncAppliesDeltaSideEffects(t *testing.T) {
 		{Id: 2, Uuid: "user-delete", SpeedLimit: 10, DeviceLimit: 1},
 		{Id: 3, Uuid: "user-update", SpeedLimit: 10, DeviceLimit: 1},
 	}
-	l := limiter.AddLimiter("test-tag", initialUsers, map[int]int{1: 1, 2: 1, 3: 1})
+	l := limiter.AddLimiter("hysteria2", "test-tag", initialUsers, map[int]int{1: 1, 2: 1, 3: 1})
 	t.Cleanup(func() { limiter.DeleteLimiter("test-tag") })
 
 	var (
@@ -382,7 +382,7 @@ func TestExecuteNodeUserSyncFallsBackToFullList(t *testing.T) {
 		{Id: 2, Uuid: "user-delete", SpeedLimit: 10, DeviceLimit: 1},
 		{Id: 3, Uuid: "user-update", SpeedLimit: 10, DeviceLimit: 1},
 	}
-	l := limiter.AddLimiter("fallback-tag", initialUsers, map[int]int{1: 1, 2: 1, 3: 1})
+	l := limiter.AddLimiter("hysteria2", "fallback-tag", initialUsers, map[int]int{1: 1, 2: 1, 3: 1})
 	t.Cleanup(func() { limiter.DeleteLimiter("fallback-tag") })
 
 	var (
