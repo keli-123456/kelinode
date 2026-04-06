@@ -144,3 +144,59 @@ func TestCommitOnlineDeviceReportKeepsNewConnectionsAfterSnapshot(t *testing.T) 
 		t.Fatalf("unexpected remaining online ip: got %q want %q", got, "3.3.3.3")
 	}
 }
+
+func TestCheckLimitRejectsBurstOfLocalNewIPsBeforeAliveSync(t *testing.T) {
+	t.Parallel()
+
+	Init()
+	tag := "burst-limit-tag"
+	l := AddLimiter("vless", tag, []panel.UserInfo{{
+		Id:          5,
+		Uuid:        "user-5",
+		DeviceLimit: 2,
+	}}, map[int]int{})
+	t.Cleanup(func() { DeleteLimiter(tag) })
+
+	key := format.UserTag(tag, "user-5")
+	if _, reject := l.CheckLimit(key, "1.1.1.1", true); reject {
+		t.Fatal("expected first ip to be accepted")
+	}
+	if _, reject := l.CheckLimit(key, "2.2.2.2", true); reject {
+		t.Fatal("expected second ip to be accepted")
+	}
+	if _, reject := l.CheckLimit(key, "3.3.3.3", true); !reject {
+		t.Fatal("expected third ip to be rejected before alive sync")
+	}
+
+	online, err := l.GetOnlineDevice()
+	if err != nil {
+		t.Fatalf("get online device failed: %v", err)
+	}
+	if got := len(*online); got != 2 {
+		t.Fatalf("unexpected online device count after rejection: got %d want 2", got)
+	}
+}
+
+func TestCheckLimitDoesNotDoubleCountPreviouslyReportedSameIP(t *testing.T) {
+	t.Parallel()
+
+	Init()
+	tag := "same-ip-tag"
+	l := AddLimiter("vless", tag, []panel.UserInfo{{
+		Id:          6,
+		Uuid:        "user-6",
+		DeviceLimit: 1,
+	}}, map[int]int{
+		6: 1,
+	})
+	l.OldUserOnline.Store("1.1.1.1", 6)
+	t.Cleanup(func() { DeleteLimiter(tag) })
+
+	key := format.UserTag(tag, "user-6")
+	if _, reject := l.CheckLimit(key, "1.1.1.1", true); reject {
+		t.Fatal("expected previously reported same ip to be accepted")
+	}
+	if _, reject := l.CheckLimit(key, "2.2.2.2", true); !reject {
+		t.Fatal("expected new ip beyond device limit to be rejected")
+	}
+}

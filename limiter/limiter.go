@@ -200,6 +200,52 @@ func (l *Limiter) tracksUDPSource() bool {
 	}
 }
 
+func (l *Limiter) getOrCreateUserOnlineIPMap(taguuid string) (*sync.Map, bool) {
+	if v, ok := l.UserOnlineIP.Load(taguuid); ok {
+		return v.(*sync.Map), false
+	}
+
+	newipMap := new(sync.Map)
+	if v, loaded := l.UserOnlineIP.LoadOrStore(taguuid, newipMap); loaded {
+		return v.(*sync.Map), false
+	}
+
+	return newipMap, true
+}
+
+func (l *Limiter) ownsOldIP(uid int, ip string) bool {
+	if v, ok := l.OldUserOnline.Load(ip); ok {
+		return v.(int) == uid
+	}
+	return false
+}
+
+func (l *Limiter) pendingNewIPCount(taguuid string, uid int) int {
+	v, ok := l.UserOnlineIP.Load(taguuid)
+	if !ok {
+		return 0
+	}
+
+	count := 0
+	ipMap := v.(*sync.Map)
+	ipMap.Range(func(key, value interface{}) bool {
+		currentUID := value.(int)
+		if currentUID != uid {
+			return true
+		}
+
+		ip := key.(string)
+		if l.ownsOldIP(uid, ip) {
+			return true
+		}
+
+		count++
+		return true
+	})
+
+	return count
+}
+
 func (l *Limiter) CheckLimit(taguuid string, ip string, noUDPsource bool) (Bucket *ratelimit.Bucket, Reject bool) {
 	// check if ipv4 mapped ipv6
 	ip = strings.TrimPrefix(ip, "::ffff:")
@@ -229,48 +275,17 @@ func (l *Limiter) CheckLimit(taguuid string, ip string, noUDPsource bool) (Bucke
 	}
 	if noUDPsource || l.tracksUDPSource() {
 		aliveIp := l.getAliveIP(uid)
-
-		// Fast path: most of the time a user already has an ipMap.
-		// Avoid allocating a new sync.Map on every connection.
-		if v, ok := l.UserOnlineIP.Load(taguuid); ok {
-			ipMap := v.(*sync.Map)
-			if _, loaded := ipMap.LoadOrStore(ip, uid); !loaded {
-				if v, ok := l.OldUserOnline.Load(ip); ok {
-					if v.(int) == uid {
-						l.OldUserOnline.Delete(ip)
+		ipMap, created := l.getOrCreateUserOnlineIPMap(taguuid)
+		if _, loaded := ipMap.Load(ip); !loaded {
+			if !l.ownsOldIP(uid, ip) && deviceLimit > 0 {
+				if deviceLimit <= aliveIp+l.pendingNewIPCount(taguuid, uid) {
+					if created {
+						l.UserOnlineIP.Delete(taguuid)
 					}
-				} else if deviceLimit > 0 && deviceLimit <= aliveIp {
-					ipMap.Delete(ip)
 					return nil, true
 				}
 			}
-		} else {
-			// Store online user for device limit / online reporting.
-			newipMap := new(sync.Map)
-			newipMap.Store(ip, uid)
-
-			// If any device is online
-			if v, loaded := l.UserOnlineIP.LoadOrStore(taguuid, newipMap); loaded {
-				ipMap := v.(*sync.Map)
-				// If this is a new ip
-				if _, loaded := ipMap.LoadOrStore(ip, uid); !loaded {
-					if v, ok := l.OldUserOnline.Load(ip); ok {
-						if v.(int) == uid {
-							l.OldUserOnline.Delete(ip)
-						}
-					} else if deviceLimit > 0 && deviceLimit <= aliveIp {
-						ipMap.Delete(ip)
-						return nil, true
-					}
-				}
-			} else if v, ok := l.OldUserOnline.Load(ip); ok {
-				if v.(int) == uid {
-					l.OldUserOnline.Delete(ip)
-				}
-			} else if deviceLimit > 0 && deviceLimit <= aliveIp {
-				l.UserOnlineIP.Delete(taguuid)
-				return nil, true
-			}
+			ipMap.Store(ip, uid)
 		}
 	}
 
