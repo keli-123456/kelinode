@@ -383,6 +383,39 @@ func TestBuildInboundTuicWithTLS(t *testing.T) {
 	}
 }
 
+func TestBuildInboundTuicWithCustomALPN(t *testing.T) {
+	t.Parallel()
+
+	certFile, keyFile := writeTestCertificateFiles(t)
+	nodeInfo := &panel.NodeInfo{
+		Type:     "tuic",
+		Security: panel.Tls,
+		Common: &panel.CommonNode{
+			ListenIP:   "0.0.0.0",
+			ServerPort: 8443,
+			TlsSettings: panel.TlsSettings{
+				ALPN: []string{"h3", "h2"},
+			},
+			CertInfo: &panel.CertInfo{
+				CertMode: "file",
+				CertFile: certFile,
+				KeyFile:  keyFile,
+			},
+		},
+	}
+
+	config, err := buildInbound(nodeInfo, "tuic-inbound")
+	if err != nil {
+		t.Fatalf("build inbound failed: %v", err)
+	}
+
+	receiver := decodeTypedMessage[*proxyman.ReceiverConfig](t, config.ReceiverSettings)
+	tlsConfig := decodeTypedMessage[*tlscfg.Config](t, receiver.GetStreamSettings().GetSecuritySettings()[0])
+	if got, want := tlsConfig.GetNextProtocol(), []string{"h3", "h2"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("unexpected tls alpn: got %v want %v", got, want)
+	}
+}
+
 func TestBuildInboundAnyTLSWebSocket(t *testing.T) {
 	t.Parallel()
 
@@ -431,6 +464,41 @@ func TestBuildInboundAnyTLSWebSocket(t *testing.T) {
 	proxyConfig := decodeTypedMessage[*anytls.ServerConfig](t, config.ProxySettings)
 	if got, want := proxyConfig.GetPaddingScheme(), "stop=8\nmax=900"; got != want {
 		t.Fatalf("unexpected anytls padding scheme: got %q want %q", got, want)
+	}
+}
+
+func TestBuildInboundAnyTLSWithCustomALPN(t *testing.T) {
+	t.Parallel()
+
+	certFile, keyFile := writeTestCertificateFiles(t)
+	nodeInfo := &panel.NodeInfo{
+		Type:     "anytls",
+		Security: panel.Tls,
+		Common: &panel.CommonNode{
+			ListenIP:      "0.0.0.0",
+			ServerPort:    9443,
+			Network:       "tcp",
+			PaddingScheme: []string{"stop=8"},
+			TlsSettings: panel.TlsSettings{
+				ALPN: []string{"h2", "http/1.1"},
+			},
+			CertInfo: &panel.CertInfo{
+				CertMode: "file",
+				CertFile: certFile,
+				KeyFile:  keyFile,
+			},
+		},
+	}
+
+	config, err := buildInbound(nodeInfo, "anytls-inbound")
+	if err != nil {
+		t.Fatalf("build inbound failed: %v", err)
+	}
+
+	receiver := decodeTypedMessage[*proxyman.ReceiverConfig](t, config.ReceiverSettings)
+	tlsConfig := decodeTypedMessage[*tlscfg.Config](t, receiver.GetStreamSettings().GetSecuritySettings()[0])
+	if got, want := tlsConfig.GetNextProtocol(), []string{"h2", "http/1.1"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("unexpected tls alpn: got %v want %v", got, want)
 	}
 }
 

@@ -137,8 +137,7 @@ func buildInbound(nodeInfo *panel.NodeInfo, tag string) (*core.InboundHandlerCon
 				},
 				RejectUnknownSNI: nodeInfo.Common.CertInfo.RejectUnknownSni,
 			}
-			if nodeInfo.Type == "hysteria2" || nodeInfo.Type == "tuic" {
-				alpnList := &coreConf.StringList{"h3"}
+			if alpnList := resolveTLSALPN(nodeInfo); alpnList != nil {
 				in.StreamSetting.TLSSettings.ALPN = alpnList
 			}
 		}
@@ -174,6 +173,38 @@ func buildInbound(nodeInfo *panel.NodeInfo, tag string) (*core.InboundHandlerCon
 	}
 	in.Tag = tag
 	return in.Build()
+}
+
+func resolveTLSALPN(nodeInfo *panel.NodeInfo) *coreConf.StringList {
+	if nodeInfo == nil || nodeInfo.Common == nil {
+		return nil
+	}
+
+	normalized := make([]string, 0, len(nodeInfo.Common.TlsSettings.ALPN))
+	seen := make(map[string]struct{}, len(nodeInfo.Common.TlsSettings.ALPN))
+	for _, value := range nodeInfo.Common.TlsSettings.ALPN {
+		text := strings.TrimSpace(value)
+		if text == "" {
+			continue
+		}
+		if _, ok := seen[text]; ok {
+			continue
+		}
+		seen[text] = struct{}{}
+		normalized = append(normalized, text)
+	}
+
+	if len(normalized) == 0 {
+		switch nodeInfo.Type {
+		case "hysteria2", "tuic":
+			return &coreConf.StringList{"h3"}
+		default:
+			return nil
+		}
+	}
+
+	alpn := coreConf.StringList(normalized)
+	return &alpn
 }
 
 func buildVLess(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourConfig) error {
