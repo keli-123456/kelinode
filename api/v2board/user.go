@@ -41,7 +41,9 @@ type UserDeltaBody struct {
 }
 
 type AliveMap struct {
-	Alive map[int]int `json:"alive"`
+	Alive   map[int]int      `json:"alive"`
+	AliveIPs map[int][]string `json:"alive_ips"`
+	Mode    int              `json:"mode"`
 }
 
 func cloneAliveMap(src map[int]int) map[int]int {
@@ -55,11 +57,42 @@ func cloneAliveMap(src map[int]int) map[int]int {
 	return dst
 }
 
+func cloneAliveSnapshot(src *AliveMap) *AliveMap {
+	if src == nil {
+		return &AliveMap{
+			Alive:    map[int]int{},
+			AliveIPs: map[int][]string{},
+		}
+	}
+
+	snapshot := &AliveMap{
+		Alive:    cloneAliveMap(src.Alive),
+		AliveIPs: make(map[int][]string, len(src.AliveIPs)),
+		Mode:     src.Mode,
+	}
+	for uid, ips := range src.AliveIPs {
+		if len(ips) == 0 {
+			snapshot.AliveIPs[uid] = []string{}
+			continue
+		}
+		cloned := append([]string(nil), ips...)
+		snapshot.AliveIPs[uid] = cloned
+	}
+	return snapshot
+}
+
 func (c *Client) CachedAliveMap() map[int]int {
 	if c == nil || c.AliveMap == nil {
 		return map[int]int{}
 	}
 	return cloneAliveMap(c.AliveMap.Alive)
+}
+
+func (c *Client) CachedAliveSnapshot() *AliveMap {
+	if c == nil {
+		return cloneAliveSnapshot(nil)
+	}
+	return cloneAliveSnapshot(c.AliveMap)
 }
 
 // GetUserList will pull user from v2board
@@ -208,6 +241,9 @@ func (c *Client) GetUserAlive(ctx context.Context) (map[int]int, error) {
 	}
 	if next.Alive == nil {
 		next.Alive = make(map[int]int)
+	}
+	if next.AliveIPs == nil {
+		next.AliveIPs = make(map[int][]string)
 	}
 	c.AliveMap = next
 

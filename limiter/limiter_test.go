@@ -200,3 +200,35 @@ func TestCheckLimitDoesNotDoubleCountPreviouslyReportedSameIP(t *testing.T) {
 		t.Fatal("expected new ip beyond device limit to be rejected")
 	}
 }
+
+func TestCheckLimitAllowsSameGlobalIPInLooseMode(t *testing.T) {
+	t.Parallel()
+
+	Init()
+	tag := "global-ip-tag"
+	l := AddLimiter("vless", tag, []panel.UserInfo{{
+		Id:          7,
+		Uuid:        "user-7",
+		DeviceLimit: 1,
+	}}, map[int]int{
+		7: 1,
+	})
+	l.SetAliveSnapshot(&panel.AliveMap{
+		Alive: map[int]int{
+			7: 1,
+		},
+		AliveIPs: map[int][]string{
+			7: {"1.1.1.1"},
+		},
+		Mode: 1,
+	})
+	t.Cleanup(func() { DeleteLimiter(tag) })
+
+	key := format.UserTag(tag, "user-7")
+	if _, reject := l.CheckLimit(key, "1.1.1.1", true); reject {
+		t.Fatal("expected same global ip to be accepted in loose mode")
+	}
+	if _, reject := l.CheckLimit(key, "2.2.2.2", true); !reject {
+		t.Fatal("expected new global ip beyond device limit to be rejected")
+	}
+}

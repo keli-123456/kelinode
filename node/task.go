@@ -206,7 +206,8 @@ func (c *Controller) executeNodeUserSync(ctx context.Context) (userSyncSummary, 
 		}).Warn("Get user alive list failed, keeping previous snapshot")
 	} else if newA != nil {
 		c.aliveMap = newA
-		c.limiter.SetAliveList(newA)
+		c.aliveSnapshot = c.apiClient.CachedAliveSnapshot()
+		c.limiter.SetAliveSnapshot(c.aliveSnapshot)
 	}
 	if len(updated) > 0 {
 		if err := c.applyUpdatedUsers(updated); err != nil {

@@ -28,6 +28,8 @@ type Limiter struct {
 	UserLimitInfo *sync.Map      // Key: TagUUID value: UserLimitInfo
 	SpeedLimiter  *sync.Map      // key: TagUUID, value: *ratelimit.Bucket
 	aliveList     atomic.Value   // map[int]int, Key: Uid, value: alive_ip (immutable snapshot)
+	aliveIPList   atomic.Value   // map[int]map[string]struct{}, Key: Uid, value: alive ip set
+	aliveMode     atomic.Int32
 }
 
 type UserLimitInfo struct {
@@ -80,6 +82,41 @@ func (l *Limiter) SetAliveList(alive map[int]int) {
 	l.aliveList.Store(next)
 }
 
+func (l *Limiter) SetAliveSnapshot(snapshot *panel.AliveMap) {
+	if snapshot == nil {
+		l.SetAliveList(nil)
+		l.aliveIPList.Store(map[int]map[string]struct{}{})
+		l.aliveMode.Store(0)
+		return
+	}
+
+	l.SetAliveList(snapshot.Alive)
+
+	nextIPs := make(map[int]map[string]struct{}, len(snapshot.AliveIPs))
+	for uid, ips := range snapshot.AliveIPs {
+		normalizedUID := uid
+		if normalizedUID <= 0 {
+			continue
+		}
+
+		ipSet := make(map[string]struct{}, len(ips))
+		for _, ip := range ips {
+			trimmed := strings.TrimPrefix(strings.TrimSpace(ip), "::ffff:")
+			if trimmed == "" {
+				continue
+			}
+			ipSet[trimmed] = struct{}{}
+		}
+		if len(ipSet) == 0 {
+			continue
+		}
+		nextIPs[normalizedUID] = ipSet
+	}
+
+	l.aliveIPList.Store(nextIPs)
+	l.aliveMode.Store(int32(snapshot.Mode))
+}
+
 func (l *Limiter) getAliveIP(uid int) int {
 	if l == nil {
 		return 0
@@ -89,6 +126,33 @@ func (l *Limiter) getAliveIP(uid int) int {
 		return 0
 	}
 	return v.(map[int]int)[uid]
+}
+
+func (l *Limiter) getAliveMode() int {
+	if l == nil {
+		return 0
+	}
+	return int(l.aliveMode.Load())
+}
+
+func (l *Limiter) hasGlobalAliveIP(uid int, ip string) bool {
+	if l == nil || l.getAliveMode() != 1 {
+		return false
+	}
+
+	v := l.aliveIPList.Load()
+	if v == nil {
+		return false
+	}
+
+	ipSets := v.(map[int]map[string]struct{})
+	userIPs, ok := ipSets[uid]
+	if !ok {
+		return false
+	}
+
+	_, exists := userIPs[ip]
+	return exists
 }
 
 func (l *Limiter) deleteAliveIDs(ids []int) {
@@ -220,6 +284,10 @@ func (l *Limiter) ownsOldIP(uid int, ip string) bool {
 	return false
 }
 
+func (l *Limiter) isKnownAliveIP(uid int, ip string) bool {
+	return l.ownsOldIP(uid, ip) || l.hasGlobalAliveIP(uid, ip)
+}
+
 func (l *Limiter) pendingNewIPCount(taguuid string, uid int) int {
 	v, ok := l.UserOnlineIP.Load(taguuid)
 	if !ok {
@@ -235,7 +303,7 @@ func (l *Limiter) pendingNewIPCount(taguuid string, uid int) int {
 		}
 
 		ip := key.(string)
-		if l.ownsOldIP(uid, ip) {
+		if l.isKnownAliveIP(uid, ip) {
 			return true
 		}
 
@@ -273,15 +341,15 @@ func (l *Limiter) CheckLimit(taguuid string, ip string, noUDPsource bool) (Bucke
 	} else {
 		return nil, true
 	}
-	if noUDPsource || l.tracksUDPSource() {
-		aliveIp := l.getAliveIP(uid)
-		ipMap, created := l.getOrCreateUserOnlineIPMap(taguuid)
-		if _, loaded := ipMap.Load(ip); !loaded {
-			if !l.ownsOldIP(uid, ip) && deviceLimit > 0 {
-				if deviceLimit <= aliveIp+l.pendingNewIPCount(taguuid, uid) {
-					if created {
-						l.UserOnlineIP.Delete(taguuid)
-					}
+		if noUDPsource || l.tracksUDPSource() {
+			aliveIp := l.getAliveIP(uid)
+			ipMap, created := l.getOrCreateUserOnlineIPMap(taguuid)
+			if _, loaded := ipMap.Load(ip); !loaded {
+				if !l.isKnownAliveIP(uid, ip) && deviceLimit > 0 {
+					if deviceLimit <= aliveIp+l.pendingNewIPCount(taguuid, uid) {
+						if created {
+							l.UserOnlineIP.Delete(taguuid)
+						}
 					return nil, true
 				}
 			}

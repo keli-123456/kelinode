@@ -23,6 +23,10 @@ func TestGetUserAlivePreservesCachedSnapshotOnFailure(t *testing.T) {
 				"alive": map[string]int{
 					"1": 2,
 				},
+				"alive_ips": map[string][]string{
+					"1": {"1.1.1.1", "2.2.2.2"},
+				},
+				"mode": 1,
 			}), nil
 		default:
 			return jsonResponse(t, req, http.StatusInternalServerError, map[string]any{
@@ -50,6 +54,14 @@ func TestGetUserAlivePreservesCachedSnapshotOnFailure(t *testing.T) {
 	cached := client.CachedAliveMap()
 	if got := cached[1]; got != 2 {
 		t.Fatalf("expected cached alive snapshot to be preserved, got %d want 2", got)
+	}
+
+	snapshot := client.CachedAliveSnapshot()
+	if got := snapshot.Mode; got != 1 {
+		t.Fatalf("unexpected cached mode: got %d want 1", got)
+	}
+	if got := len(snapshot.AliveIPs[1]); got != 2 {
+		t.Fatalf("unexpected cached alive ips count: got %d want 2", got)
 	}
 }
 

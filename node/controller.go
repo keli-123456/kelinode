@@ -25,6 +25,7 @@ type Controller struct {
 	userSyncStatePath         string
 	realtimeConfig            conf.RealtimeConfig
 	aliveMap                  map[int]int
+	aliveSnapshot             *panel.AliveMap
 	conf                      *conf.NodeConfig
 	info                      *panel.NodeInfo
 	nodeConfigMonitorPeriodic *task.Task
@@ -89,6 +90,7 @@ func (c *Controller) Start(x *core.V2Core) error {
 		}).Warn("Get user alive list failed, starting with cached snapshot")
 		c.aliveMap = c.apiClient.CachedAliveMap()
 	}
+	c.aliveSnapshot = c.apiClient.CachedAliveSnapshot()
 	if c.aliveMap == nil {
 		c.aliveMap = make(map[int]int)
 	}
@@ -96,6 +98,7 @@ func (c *Controller) Start(x *core.V2Core) error {
 
 	// add limiter
 	l := limiter.AddLimiter(c.info.Type, c.tag, c.userList, c.aliveMap)
+	l.SetAliveSnapshot(c.aliveSnapshot)
 	c.limiter = l
 	if node.Security == panel.Tls {
 		err = c.requestCert()
