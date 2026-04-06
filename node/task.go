@@ -198,13 +198,14 @@ func (c *Controller) executeNodeUserSync(ctx context.Context) (userSyncSummary, 
 	}
 
 	// get user alive
-	newA, err := c.apiClient.GetUserAlive(ctx)
-	if err != nil {
-		return summary, err
-	}
-
-	// update alive list
-	if newA != nil {
+	newA, aliveErr := c.apiClient.GetUserAlive(ctx)
+	if aliveErr != nil {
+		log.WithFields(log.Fields{
+			"tag": c.tag,
+			"err": aliveErr,
+		}).Warn("Get user alive list failed, keeping previous snapshot")
+	} else if newA != nil {
+		c.aliveMap = newA
 		c.limiter.SetAliveList(newA)
 	}
 	if len(updated) > 0 {
@@ -214,8 +215,7 @@ func (c *Controller) executeNodeUserSync(ctx context.Context) (userSyncSummary, 
 	}
 	if len(deleted) > 0 {
 		// have deleted users
-		err = c.applyDeletedUsers(ctx, deleted)
-		if err != nil {
+		if err := c.applyDeletedUsers(ctx, deleted); err != nil {
 			if ctx.Err() != nil {
 				return summary, nil
 			}
@@ -224,8 +224,7 @@ func (c *Controller) executeNodeUserSync(ctx context.Context) (userSyncSummary, 
 	}
 	if len(added) > 0 {
 		// have added users
-		err = c.applyAddedUsers(ctx, added)
-		if err != nil {
+		if err := c.applyAddedUsers(ctx, added); err != nil {
 			if ctx.Err() != nil {
 				return summary, nil
 			}

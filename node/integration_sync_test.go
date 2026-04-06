@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	panel "github.com/keli-123456/kelinode/api/v2board"
+	"github.com/keli-123456/kelinode/common/format"
 	"github.com/keli-123456/kelinode/conf"
 	v2core "github.com/keli-123456/kelinode/core"
 	"github.com/keli-123456/kelinode/limiter"
@@ -429,6 +430,72 @@ func TestExecuteNodeUserSyncFallsBackToFullList(t *testing.T) {
 	assertUserUUIDs(t, gotUpdated, []string{"user-update"})
 	assertUserUUIDs(t, gotDeleted, []string{"user-delete"})
 	assertUserUUIDs(t, gotAdded, []string{"user-add"})
+}
+
+func TestExecuteNodeUserSyncKeepsPreviousAliveSnapshotOnAliveFetchFailure(t *testing.T) {
+	t.Parallel()
+
+	nodeConf := &conf.NodeConfig{
+		APIHost:   "https://panel.example.com",
+		NodeID:    11,
+		Key:       "test-token",
+		Timeout:   5,
+		ConfigDir: t.TempDir(),
+	}
+	client := newTestPanelClient(t, 11, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/api/v1/server/UniProxy/user_delta":
+			return jsonResponse(t, req, http.StatusNotFound, map[string]any{"message": "not found"}), nil
+		case "/api/v1/server/UniProxy/user":
+			return jsonResponse(t, req, http.StatusOK, map[string]any{
+				"users": []map[string]any{
+					{"id": 1, "uuid": "user-keep", "speed_limit": 10, "device_limit": 1},
+				},
+			}), nil
+		case "/api/v1/server/UniProxy/alivelist":
+			return jsonResponse(t, req, http.StatusInternalServerError, map[string]any{
+				"message": "panel error",
+			}), nil
+		default:
+			return jsonResponse(t, req, http.StatusNotFound, map[string]any{"message": "not found"}), nil
+		}
+	}))
+
+	limiter.Init()
+	initialUsers := []panel.UserInfo{
+		{Id: 1, Uuid: "user-keep", SpeedLimit: 10, DeviceLimit: 1},
+	}
+	l := limiter.AddLimiter("hysteria2", "alive-fallback-tag", initialUsers, map[int]int{1: 1})
+	t.Cleanup(func() { limiter.DeleteLimiter("alive-fallback-tag") })
+
+	controller := NewController(client, nodeConf, &panel.NodeInfo{
+		Type: "hysteria2",
+		Common: &panel.CommonNode{
+			BaseConfig: &panel.BaseConfig{},
+		},
+	}, conf.RealtimeConfig{})
+	controller.tag = "alive-fallback-tag"
+	controller.limiter = l
+	controller.userList = append([]panel.UserInfo(nil), initialUsers...)
+	controller.userDeltaSupported = true
+	controller.updateUserIDsFn = func(tag string, updated []panel.UserInfo) error { return nil }
+	controller.delUsersFn = func(ctx context.Context, deleted []panel.UserInfo, tag string) error { return nil }
+	controller.addUsersFn = func(ctx context.Context, params *v2core.AddUsersParams) (int, error) {
+		return len(params.Users), nil
+	}
+
+	summary, err := controller.executeNodeUserSync(context.Background())
+	if err != nil {
+		t.Fatalf("execute node user sync failed: %v", err)
+	}
+	if got, want := summary, (userSyncSummary{}); got != want {
+		t.Fatalf("unexpected user sync summary: got %+v want %+v", got, want)
+	}
+
+	_, reject := controller.limiter.CheckLimit(format.UserTag("alive-fallback-tag", "user-keep"), "9.9.9.9", true)
+	if !reject {
+		t.Fatal("expected previous alive snapshot to continue enforcing device limit")
+	}
 }
 
 func TestUserSyncStatePathUsesConfigDir(t *testing.T) {

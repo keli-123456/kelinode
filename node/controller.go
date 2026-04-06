@@ -83,7 +83,14 @@ func (c *Controller) Start(x *core.V2Core) error {
 	}
 	c.aliveMap, err = c.apiClient.GetUserAlive(context.Background())
 	if err != nil {
-		return fmt.Errorf("failed to get user alive list: %s", err)
+		log.WithFields(log.Fields{
+			"tag": node.Tag,
+			"err": err,
+		}).Warn("Get user alive list failed, starting with cached snapshot")
+		c.aliveMap = c.apiClient.CachedAliveMap()
+	}
+	if c.aliveMap == nil {
+		c.aliveMap = make(map[int]int)
 	}
 	c.tag = node.Tag
 

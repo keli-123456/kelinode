@@ -14,8 +14,9 @@ import (
 )
 
 type OnlineUser struct {
-	UID int
-	IP  string
+	UID     int
+	IP      string
+	TagUUID string
 }
 
 type UserInfo struct {
@@ -41,6 +42,24 @@ type UserDeltaBody struct {
 
 type AliveMap struct {
 	Alive map[int]int `json:"alive"`
+}
+
+func cloneAliveMap(src map[int]int) map[int]int {
+	if len(src) == 0 {
+		return map[int]int{}
+	}
+	dst := make(map[int]int, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+func (c *Client) CachedAliveMap() map[int]int {
+	if c == nil || c.AliveMap == nil {
+		return map[int]int{}
+	}
+	return cloneAliveMap(c.AliveMap.Alive)
 }
 
 // GetUserList will pull user from v2board
@@ -158,24 +177,41 @@ func (c *Client) GetUserDelta(ctx context.Context, since int64) (*UserDeltaBody,
 
 // GetUserAlive will fetch the alive_ip count for users
 func (c *Client) GetUserAlive(ctx context.Context) (map[int]int, error) {
-	c.AliveMap = &AliveMap{}
+	if c.AliveMap == nil {
+		c.AliveMap = &AliveMap{}
+	}
 	const path = "/api/v1/server/UniProxy/alivelist"
 	r, err := c.client.R().
 		SetContext(ctx).
 		ForceContentType("application/json").
 		Get(path)
 
-	if err != nil || r == nil || r.RawResponse == nil || r.StatusCode() >= 399 {
-		c.AliveMap.Alive = make(map[int]int)
-		return c.AliveMap.Alive, nil
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if r == nil || r.RawResponse == nil {
+		return nil, fmt.Errorf("received nil response or raw response")
 	}
 	defer r.RawResponse.Body.Close()
-	if err := json.Unmarshal(r.Body(), c.AliveMap); err != nil {
-		fmt.Printf("unmarshal user alive list error: %s", err)
-		c.AliveMap.Alive = make(map[int]int)
+	if r.StatusCode() >= 399 {
+		return nil, fmt.Errorf("fetch user alive list failed: %s", r.Status())
 	}
+	next := &AliveMap{}
+	if err := json.Unmarshal(r.Body(), next); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("decode user alive list error: %w", err)
+	}
+	if next.Alive == nil {
+		next.Alive = make(map[int]int)
+	}
+	c.AliveMap = next
 
-	return c.AliveMap.Alive, nil
+	return cloneAliveMap(next.Alive), nil
 }
 
 type UserTraffic struct {

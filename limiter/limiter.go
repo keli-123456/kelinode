@@ -191,6 +191,15 @@ func (l *Limiter) UpdateDynamicSpeedLimit(tag, uuid string, limit int, expire ti
 	return nil
 }
 
+func (l *Limiter) tracksUDPSource() bool {
+	switch l.Nodetype {
+	case "hysteria2", "tuic":
+		return true
+	default:
+		return false
+	}
+}
+
 func (l *Limiter) CheckLimit(taguuid string, ip string, noUDPsource bool) (Bucket *ratelimit.Bucket, Reject bool) {
 	// check if ipv4 mapped ipv6
 	ip = strings.TrimPrefix(ip, "::ffff:")
@@ -218,7 +227,7 @@ func (l *Limiter) CheckLimit(taguuid string, ip string, noUDPsource bool) (Bucke
 	} else {
 		return nil, true
 	}
-	if noUDPsource || l.Nodetype == "hysteria2" {
+	if noUDPsource || l.tracksUDPSource() {
 		aliveIp := l.getAliveIP(uid)
 
 		// Fast path: most of the time a user already has an ipMap.
@@ -284,22 +293,56 @@ func (l *Limiter) CheckLimit(taguuid string, ip string, noUDPsource bool) (Bucke
 
 func (l *Limiter) GetOnlineDevice() (*[]panel.OnlineUser, error) {
 	var onlineUser []panel.OnlineUser
-	l.OldUserOnline = new(sync.Map)
 	l.UserOnlineIP.Range(func(key, value interface{}) bool {
 		taguuid := key.(string)
 		ipMap := value.(*sync.Map)
 		ipMap.Range(func(key, value interface{}) bool {
 			uid := value.(int)
 			ip := key.(string)
-			l.OldUserOnline.Store(ip, uid)
-			onlineUser = append(onlineUser, panel.OnlineUser{UID: uid, IP: ip})
+			onlineUser = append(onlineUser, panel.OnlineUser{UID: uid, IP: ip, TagUUID: taguuid})
 			return true
 		})
-		l.UserOnlineIP.Delete(taguuid) // Reset online device
 		return true
 	})
 
 	return &onlineUser, nil
+}
+
+func (l *Limiter) CommitOnlineDeviceReport(reported []panel.OnlineUser) {
+	nextOld := new(sync.Map)
+
+	for i := range reported {
+		online := reported[i]
+		if online.UID <= 0 || online.IP == "" {
+			continue
+		}
+
+		nextOld.Store(online.IP, online.UID)
+
+		if online.TagUUID == "" {
+			continue
+		}
+		v, ok := l.UserOnlineIP.Load(online.TagUUID)
+		if !ok {
+			continue
+		}
+		ipMap := v.(*sync.Map)
+		if currentUID, loaded := ipMap.Load(online.IP); loaded {
+			if currentUID.(int) == online.UID {
+				ipMap.Delete(online.IP)
+			}
+		}
+		empty := true
+		ipMap.Range(func(_, _ interface{}) bool {
+			empty = false
+			return false
+		})
+		if empty {
+			l.UserOnlineIP.Delete(online.TagUUID)
+		}
+	}
+
+	l.OldUserOnline = nextOld
 }
 
 type UserIpList struct {

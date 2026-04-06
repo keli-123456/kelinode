@@ -76,6 +76,7 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 				"err": err,
 			}).Error("Report online users failed")
 		} else {
+			c.limiter.CommitOnlineDeviceReport(*onlineDevice)
 			log.WithField("tag", c.tag).Infof("Total %d online users, %d Reported", len(*onlineDevice), len(result))
 			//log.WithField("tag", c.tag).Debugf("Online users: %+v", data)
 		}
