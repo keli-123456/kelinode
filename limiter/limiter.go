@@ -10,6 +10,7 @@ import (
 	"github.com/juju/ratelimit"
 	panel "github.com/keli-123456/kelinode/api/v2board"
 	"github.com/keli-123456/kelinode/common/format"
+	log "github.com/sirupsen/logrus"
 )
 
 var limitLock sync.RWMutex
@@ -20,6 +21,7 @@ func Init() {
 }
 
 type Limiter struct {
+	Tag           string
 	Nodetype      string
 	SpeedLimit    int
 	UserOnlineIP  *sync.Map      // Key: TagUUID, value: {Key: Ip, value: Uid}
@@ -43,6 +45,7 @@ type UserLimitInfo struct {
 
 func AddLimiter(nodetype string, tag string, users []panel.UserInfo, aliveList map[int]int) *Limiter {
 	info := &Limiter{
+		Tag:           tag,
 		Nodetype:      nodetype,
 		UserOnlineIP:  new(sync.Map),
 		UserLimitInfo: new(sync.Map),
@@ -314,6 +317,21 @@ func (l *Limiter) pendingNewIPCount(taguuid string, uid int) int {
 	return count
 }
 
+func (l *Limiter) logDeviceLimitReject(taguuid string, uid int, ip string, deviceLimit int, aliveIP int, pendingNewIP int) {
+	log.WithFields(log.Fields{
+		"tag":            l.Tag,
+		"taguuid":        taguuid,
+		"uid":            uid,
+		"ip":             ip,
+		"device_limit":   deviceLimit,
+		"alive_ip":       aliveIP,
+		"pending_new_ip": pendingNewIP,
+		"alive_mode":     l.getAliveMode(),
+		"node_type":      l.Nodetype,
+		"reason":         "device_limit_exceeded",
+	}).Warn("Device limit rejected connection")
+}
+
 func (l *Limiter) CheckLimit(taguuid string, ip string, noUDPsource bool) (Bucket *ratelimit.Bucket, Reject bool) {
 	// check if ipv4 mapped ipv6
 	ip = strings.TrimPrefix(ip, "::ffff:")
@@ -341,15 +359,18 @@ func (l *Limiter) CheckLimit(taguuid string, ip string, noUDPsource bool) (Bucke
 	} else {
 		return nil, true
 	}
-		if noUDPsource || l.tracksUDPSource() {
-			aliveIp := l.getAliveIP(uid)
-			ipMap, created := l.getOrCreateUserOnlineIPMap(taguuid)
-			if _, loaded := ipMap.Load(ip); !loaded {
-				if !l.isKnownAliveIP(uid, ip) && deviceLimit > 0 {
-					if deviceLimit <= aliveIp+l.pendingNewIPCount(taguuid, uid) {
-						if created {
-							l.UserOnlineIP.Delete(taguuid)
-						}
+
+	if noUDPsource || l.tracksUDPSource() {
+		aliveIP := l.getAliveIP(uid)
+		ipMap, created := l.getOrCreateUserOnlineIPMap(taguuid)
+		if _, loaded := ipMap.Load(ip); !loaded {
+			if !l.isKnownAliveIP(uid, ip) && deviceLimit > 0 {
+				pendingNewIP := l.pendingNewIPCount(taguuid, uid)
+				if deviceLimit <= aliveIP+pendingNewIP {
+					l.logDeviceLimitReject(taguuid, uid, ip, deviceLimit, aliveIP, pendingNewIP)
+					if created {
+						l.UserOnlineIP.Delete(taguuid)
+					}
 					return nil, true
 				}
 			}
