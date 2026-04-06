@@ -16,6 +16,8 @@ import (
 var limitLock sync.RWMutex
 var limiter map[string]*Limiter
 
+const reportedAliveBridgeTTL = 2 * time.Minute
+
 func Init() {
 	limiter = map[string]*Limiter{}
 }
@@ -25,13 +27,19 @@ type Limiter struct {
 	Nodetype      string
 	SpeedLimit    int
 	UserOnlineIP  *sync.Map      // Key: TagUUID, value: {Key: Ip, value: Uid}
-	OldUserOnline *sync.Map      // Key: Ip, value: Uid
+	OldUserOnline *sync.Map      // Key: Ip, value: oldOnlineEntry
 	UUIDtoUID     map[string]int // Key: UUID, value: Uid
 	UserLimitInfo *sync.Map      // Key: TagUUID value: UserLimitInfo
 	SpeedLimiter  *sync.Map      // key: TagUUID, value: *ratelimit.Bucket
 	aliveList     atomic.Value   // map[int]int, Key: Uid, value: alive_ip (immutable snapshot)
 	aliveIPList   atomic.Value   // map[int]map[string]struct{}, Key: Uid, value: alive ip set
 	aliveMode     atomic.Int32
+	lastAlivePull atomic.Int64
+}
+
+type oldOnlineEntry struct {
+	UID        int
+	ReportedAt int64
 }
 
 type UserLimitInfo struct {
@@ -90,6 +98,7 @@ func (l *Limiter) SetAliveSnapshot(snapshot *panel.AliveMap) {
 		l.SetAliveList(nil)
 		l.aliveIPList.Store(map[int]map[string]struct{}{})
 		l.aliveMode.Store(0)
+		l.lastAlivePull.Store(time.Now().UnixNano())
 		return
 	}
 
@@ -118,6 +127,7 @@ func (l *Limiter) SetAliveSnapshot(snapshot *panel.AliveMap) {
 
 	l.aliveIPList.Store(nextIPs)
 	l.aliveMode.Store(int32(snapshot.Mode))
+	l.lastAlivePull.Store(time.Now().UnixNano())
 }
 
 func (l *Limiter) getAliveIP(uid int) int {
@@ -282,7 +292,11 @@ func (l *Limiter) getOrCreateUserOnlineIPMap(taguuid string) (*sync.Map, bool) {
 
 func (l *Limiter) ownsOldIP(uid int, ip string) bool {
 	if v, ok := l.OldUserOnline.Load(ip); ok {
-		return v.(int) == uid
+		entry, valid := l.oldOnlineEntry(v)
+		if !valid || !l.isFreshOldOnlineEntry(entry, time.Now().UnixNano()) {
+			return false
+		}
+		return entry.UID == uid
 	}
 	return false
 }
@@ -317,7 +331,30 @@ func (l *Limiter) pendingNewIPCount(taguuid string, uid int) int {
 	return count
 }
 
-func (l *Limiter) logDeviceLimitReject(taguuid string, uid int, ip string, deviceLimit int, aliveIP int, pendingNewIP int) {
+func (l *Limiter) recentReportedLocalIPCount(uid int) int {
+	now := time.Now().UnixNano()
+	lastAlivePull := l.lastAlivePull.Load()
+	count := 0
+
+	l.OldUserOnline.Range(func(_, value interface{}) bool {
+		entry, valid := l.oldOnlineEntry(value)
+		if !valid || entry.UID != uid {
+			return true
+		}
+		if !l.isFreshOldOnlineEntry(entry, now) {
+			return true
+		}
+		if entry.ReportedAt <= lastAlivePull {
+			return true
+		}
+		count++
+		return true
+	})
+
+	return count
+}
+
+func (l *Limiter) logDeviceLimitReject(taguuid string, uid int, ip string, deviceLimit int, aliveIP int, reportedLocalIP int, pendingNewIP int) {
 	log.WithFields(log.Fields{
 		"tag":            l.Tag,
 		"taguuid":        taguuid,
@@ -325,6 +362,7 @@ func (l *Limiter) logDeviceLimitReject(taguuid string, uid int, ip string, devic
 		"ip":             ip,
 		"device_limit":   deviceLimit,
 		"alive_ip":       aliveIP,
+		"reported_local": reportedLocalIP,
 		"pending_new_ip": pendingNewIP,
 		"alive_mode":     l.getAliveMode(),
 		"node_type":      l.Nodetype,
@@ -362,12 +400,13 @@ func (l *Limiter) CheckLimit(taguuid string, ip string, noUDPsource bool) (Bucke
 
 	if noUDPsource || l.tracksUDPSource() {
 		aliveIP := l.getAliveIP(uid)
+		reportedLocalIP := l.recentReportedLocalIPCount(uid)
 		ipMap, created := l.getOrCreateUserOnlineIPMap(taguuid)
 		if _, loaded := ipMap.Load(ip); !loaded {
 			if !l.isKnownAliveIP(uid, ip) && deviceLimit > 0 {
 				pendingNewIP := l.pendingNewIPCount(taguuid, uid)
-				if deviceLimit <= aliveIP+pendingNewIP {
-					l.logDeviceLimitReject(taguuid, uid, ip, deviceLimit, aliveIP, pendingNewIP)
+				if deviceLimit <= aliveIP+reportedLocalIP+pendingNewIP {
+					l.logDeviceLimitReject(taguuid, uid, ip, deviceLimit, aliveIP, reportedLocalIP, pendingNewIP)
 					if created {
 						l.UserOnlineIP.Delete(taguuid)
 					}
@@ -414,6 +453,7 @@ func (l *Limiter) GetOnlineDevice() (*[]panel.OnlineUser, error) {
 
 func (l *Limiter) CommitOnlineDeviceReport(reported []panel.OnlineUser) {
 	nextOld := new(sync.Map)
+	reportedAt := time.Now().UnixNano()
 
 	for i := range reported {
 		online := reported[i]
@@ -421,7 +461,10 @@ func (l *Limiter) CommitOnlineDeviceReport(reported []panel.OnlineUser) {
 			continue
 		}
 
-		nextOld.Store(online.IP, online.UID)
+		nextOld.Store(online.IP, oldOnlineEntry{
+			UID:        online.UID,
+			ReportedAt: reportedAt,
+		})
 
 		if online.TagUUID == "" {
 			continue
@@ -447,6 +490,29 @@ func (l *Limiter) CommitOnlineDeviceReport(reported []panel.OnlineUser) {
 	}
 
 	l.OldUserOnline = nextOld
+}
+
+func (l *Limiter) oldOnlineEntry(value interface{}) (oldOnlineEntry, bool) {
+	switch v := value.(type) {
+	case oldOnlineEntry:
+		return v, true
+	case *oldOnlineEntry:
+		if v == nil {
+			return oldOnlineEntry{}, false
+		}
+		return *v, true
+	case int:
+		return oldOnlineEntry{UID: v}, true
+	default:
+		return oldOnlineEntry{}, false
+	}
+}
+
+func (l *Limiter) isFreshOldOnlineEntry(entry oldOnlineEntry, now int64) bool {
+	if entry.ReportedAt <= 0 {
+		return true
+	}
+	return now-entry.ReportedAt <= int64(reportedAliveBridgeTTL)
 }
 
 type UserIpList struct {

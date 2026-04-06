@@ -2,6 +2,7 @@ package limiter
 
 import (
 	"testing"
+	"time"
 
 	panel "github.com/keli-123456/kelinode/api/v2board"
 	"github.com/keli-123456/kelinode/common/format"
@@ -189,7 +190,10 @@ func TestCheckLimitDoesNotDoubleCountPreviouslyReportedSameIP(t *testing.T) {
 	}}, map[int]int{
 		6: 1,
 	})
-	l.OldUserOnline.Store("1.1.1.1", 6)
+	l.OldUserOnline.Store("1.1.1.1", oldOnlineEntry{
+		UID:        6,
+		ReportedAt: time.Now().UnixNano(),
+	})
 	t.Cleanup(func() { DeleteLimiter(tag) })
 
 	key := format.UserTag(tag, "user-6")
@@ -198,6 +202,48 @@ func TestCheckLimitDoesNotDoubleCountPreviouslyReportedSameIP(t *testing.T) {
 	}
 	if _, reject := l.CheckLimit(key, "2.2.2.2", true); !reject {
 		t.Fatal("expected new ip beyond device limit to be rejected")
+	}
+}
+
+func TestCheckLimitRejectsNewIPAfterRecentLocalReportBeforeAlivePull(t *testing.T) {
+	t.Parallel()
+
+	Init()
+	tag := "recent-local-report-tag"
+	l := AddLimiter("vless", tag, []panel.UserInfo{{
+		Id:          8,
+		Uuid:        "user-8",
+		DeviceLimit: 3,
+	}}, map[int]int{})
+	l.SetAliveSnapshot(&panel.AliveMap{
+		Alive: map[int]int{},
+		Mode:  0,
+	})
+	t.Cleanup(func() { DeleteLimiter(tag) })
+
+	key := format.UserTag(tag, "user-8")
+	if _, reject := l.CheckLimit(key, "1.1.1.1", true); reject {
+		t.Fatal("expected first ip to be accepted")
+	}
+	if _, reject := l.CheckLimit(key, "2.2.2.2", true); reject {
+		t.Fatal("expected second ip to be accepted")
+	}
+	if _, reject := l.CheckLimit(key, "3.3.3.3", true); reject {
+		t.Fatal("expected third ip to be accepted")
+	}
+
+	reported, err := l.GetOnlineDevice()
+	if err != nil {
+		t.Fatalf("get online device failed: %v", err)
+	}
+	if got := len(*reported); got != 3 {
+		t.Fatalf("unexpected reported device count: got %d want 3", got)
+	}
+
+	l.CommitOnlineDeviceReport(*reported)
+
+	if _, reject := l.CheckLimit(key, "4.4.4.4", true); !reject {
+		t.Fatal("expected fourth ip to be rejected until next alive pull catches up")
 	}
 }
 
