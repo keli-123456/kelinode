@@ -61,6 +61,10 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
+          # Use the checked-out workspace instead of Git ref context.
+          # This avoids failures like "repository does not contain ref refs/pull/*/merge".
+          context: .
+          file: ./Dockerfile
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
