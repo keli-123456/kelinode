@@ -99,6 +99,7 @@ func (c *Controller) Start(x *core.V2Core) error {
 	// add limiter
 	l := limiter.AddLimiter(c.info.Type, c.tag, c.userList, c.aliveMap)
 	l.SetAliveSnapshot(c.aliveSnapshot)
+	l.SetDefaultDeviceLimit(defaultDeviceLimitFromNode(node))
 	c.limiter = l
 	if node.Security == panel.Tls {
 		err = c.requestCert()
@@ -203,4 +204,18 @@ func (c *Controller) Close() error {
 		return fmt.Errorf("del node error: %s", err)
 	}
 	return nil
+}
+
+func defaultDeviceLimitFromNode(node *panel.NodeInfo) int {
+	const maxDeviceLimitFallback = int(^uint32(0) >> 1)
+	if node == nil || node.Common == nil || node.Common.BaseConfig == nil {
+		return 0
+	}
+	if node.Common.BaseConfig.DeviceLimitFallback < 0 {
+		return 0
+	}
+	if node.Common.BaseConfig.DeviceLimitFallback > maxDeviceLimitFallback {
+		return maxDeviceLimitFallback
+	}
+	return node.Common.BaseConfig.DeviceLimitFallback
 }

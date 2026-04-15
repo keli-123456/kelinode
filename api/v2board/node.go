@@ -78,6 +78,7 @@ type BaseConfig struct {
 	PullInterval           any                 `json:"pull_interval"`
 	DeviceOnlineMinTraffic int                 `json:"device_online_min_traffic"`
 	NodeReportMinTraffic   int                 `json:"node_report_min_traffic"`
+	DeviceLimitFallback    int                 `json:"device_limit_fallback"`
 	Realtime               *RealtimeBaseConfig `json:"realtime"`
 }
 
