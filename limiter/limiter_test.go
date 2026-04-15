@@ -278,3 +278,145 @@ func TestCheckLimitAllowsSameGlobalIPInLooseMode(t *testing.T) {
 		t.Fatal("expected new global ip beyond device limit to be rejected")
 	}
 }
+
+func TestCheckLimitAllowsHysteria2RebindWhenKnownAliveAtLimit(t *testing.T) {
+	t.Parallel()
+
+	Init()
+	tag := "hy2-rebind-known-tag"
+	l := AddLimiter("hysteria2", tag, []panel.UserInfo{{
+		Id:          9,
+		Uuid:        "user-9",
+		DeviceLimit: 1,
+	}}, map[int]int{
+		9: 1,
+	})
+	l.SetAliveSnapshot(&panel.AliveMap{
+		Alive: map[int]int{
+			9: 1,
+		},
+		Mode: 0,
+	})
+	t.Cleanup(func() { DeleteLimiter(tag) })
+
+	key := format.UserTag(tag, "user-9")
+	if _, reject := l.CheckLimit(key, "2.2.2.2", false); reject {
+		t.Fatal("expected hysteria2 rebind ip to be accepted when known alive already at limit")
+	}
+}
+
+func TestCheckLimitAllowsHysteria2FrequentRebindByReplacingPending(t *testing.T) {
+	t.Parallel()
+
+	Init()
+	tag := "hy2-rebind-replace-tag"
+	l := AddLimiter("hysteria2", tag, []panel.UserInfo{{
+		Id:          10,
+		Uuid:        "user-10",
+		DeviceLimit: 1,
+	}}, map[int]int{
+		10: 1,
+	})
+	l.SetAliveSnapshot(&panel.AliveMap{
+		Alive: map[int]int{
+			10: 1,
+		},
+		Mode: 0,
+	})
+	t.Cleanup(func() { DeleteLimiter(tag) })
+
+	key := format.UserTag(tag, "user-10")
+	if _, reject := l.CheckLimit(key, "2.2.2.2", false); reject {
+		t.Fatal("expected first transient rebind ip to be accepted")
+	}
+	if _, reject := l.CheckLimit(key, "3.3.3.3", false); reject {
+		t.Fatal("expected second transient rebind ip to be accepted by replacing pending unknown ip")
+	}
+
+	online, err := l.GetOnlineDevice()
+	if err != nil {
+		t.Fatalf("get online device failed: %v", err)
+	}
+	if got := len(*online); got != 1 {
+		t.Fatalf("unexpected pending online device count: got %d want 1", got)
+	}
+	if got := (*online)[0].IP; got != "3.3.3.3" {
+		t.Fatalf("unexpected pending online ip after replacement: got %q want %q", got, "3.3.3.3")
+	}
+}
+
+func TestCheckLimitRejectsSecondHysteria2IPWithoutKnownAlive(t *testing.T) {
+	t.Parallel()
+
+	Init()
+	tag := "hy2-no-known-alive-tag"
+	l := AddLimiter("hysteria2", tag, []panel.UserInfo{{
+		Id:          11,
+		Uuid:        "user-11",
+		DeviceLimit: 1,
+	}}, map[int]int{})
+	t.Cleanup(func() { DeleteLimiter(tag) })
+
+	key := format.UserTag(tag, "user-11")
+	if _, reject := l.CheckLimit(key, "1.1.1.1", false); reject {
+		t.Fatal("expected first ip to be accepted")
+	}
+	if _, reject := l.CheckLimit(key, "2.2.2.2", false); !reject {
+		t.Fatal("expected second ip to be rejected without known alive snapshot")
+	}
+}
+
+func TestCheckLimitUsesDefaultDeviceLimitWhenUserLimitIsZero(t *testing.T) {
+	t.Parallel()
+
+	Init()
+	tag := "fallback-device-limit-tag"
+	l := AddLimiter("vless", tag, []panel.UserInfo{{
+		Id:          12,
+		Uuid:        "user-12",
+		DeviceLimit: 0,
+	}}, map[int]int{})
+	l.SetDefaultDeviceLimit(1)
+	t.Cleanup(func() { DeleteLimiter(tag) })
+
+	key := format.UserTag(tag, "user-12")
+	if _, reject := l.CheckLimit(key, "1.1.1.1", true); reject {
+		t.Fatal("expected first ip to be accepted with default device limit")
+	}
+	if _, reject := l.CheckLimit(key, "2.2.2.2", true); !reject {
+		t.Fatal("expected second ip to be rejected by default device limit")
+	}
+}
+
+func TestCheckLimitIgnoresNegativeDefaultDeviceLimit(t *testing.T) {
+	t.Parallel()
+
+	Init()
+	tag := "negative-default-device-limit-tag"
+	l := AddLimiter("vless", tag, []panel.UserInfo{{
+		Id:          13,
+		Uuid:        "user-13",
+		DeviceLimit: 0,
+	}}, map[int]int{})
+	l.SetDefaultDeviceLimit(-3)
+	t.Cleanup(func() { DeleteLimiter(tag) })
+
+	key := format.UserTag(tag, "user-13")
+	if _, reject := l.CheckLimit(key, "1.1.1.1", true); reject {
+		t.Fatal("expected first ip to be accepted")
+	}
+	if _, reject := l.CheckLimit(key, "2.2.2.2", true); reject {
+		t.Fatal("expected second ip to be accepted when fallback limit is disabled")
+	}
+}
+
+func TestSetDefaultDeviceLimitClampsToInt32Max(t *testing.T) {
+	t.Parallel()
+
+	l := &Limiter{}
+	l.SetDefaultDeviceLimit(1 << 40)
+
+	if got := l.getDefaultDeviceLimit(); got != maxDefaultDeviceLimit {
+		t.Fatalf("unexpected clamped fallback limit: got %d want %d", got, maxDefaultDeviceLimit)
+	}
+}

@@ -17,24 +17,26 @@ var limitLock sync.RWMutex
 var limiter map[string]*Limiter
 
 const reportedAliveBridgeTTL = 2 * time.Minute
+const maxDefaultDeviceLimit = int(^uint32(0) >> 1)
 
 func Init() {
 	limiter = map[string]*Limiter{}
 }
 
 type Limiter struct {
-	Tag           string
-	Nodetype      string
-	SpeedLimit    int
-	UserOnlineIP  *sync.Map      // Key: TagUUID, value: {Key: Ip, value: Uid}
-	OldUserOnline *sync.Map      // Key: Ip, value: oldOnlineEntry
-	UUIDtoUID     map[string]int // Key: UUID, value: Uid
-	UserLimitInfo *sync.Map      // Key: TagUUID value: UserLimitInfo
-	SpeedLimiter  *sync.Map      // key: TagUUID, value: *ratelimit.Bucket
-	aliveList     atomic.Value   // map[int]int, Key: Uid, value: alive_ip (immutable snapshot)
-	aliveIPList   atomic.Value   // map[int]map[string]struct{}, Key: Uid, value: alive ip set
-	aliveMode     atomic.Int32
-	lastAlivePull atomic.Int64
+	Tag                string
+	Nodetype           string
+	SpeedLimit         int
+	UserOnlineIP       *sync.Map      // Key: TagUUID, value: {Key: Ip, value: Uid}
+	OldUserOnline      *sync.Map      // Key: Ip, value: oldOnlineEntry
+	UUIDtoUID          map[string]int // Key: UUID, value: Uid
+	UserLimitInfo      *sync.Map      // Key: TagUUID value: UserLimitInfo
+	SpeedLimiter       *sync.Map      // key: TagUUID, value: *ratelimit.Bucket
+	aliveList          atomic.Value   // map[int]int, Key: Uid, value: alive_ip (immutable snapshot)
+	aliveIPList        atomic.Value   // map[int]map[string]struct{}, Key: Uid, value: alive ip set
+	aliveMode          atomic.Int32
+	lastAlivePull      atomic.Int64
+	defaultDeviceLimit atomic.Int32
 }
 
 type oldOnlineEntry struct {
@@ -128,6 +130,25 @@ func (l *Limiter) SetAliveSnapshot(snapshot *panel.AliveMap) {
 	l.aliveIPList.Store(nextIPs)
 	l.aliveMode.Store(int32(snapshot.Mode))
 	l.lastAlivePull.Store(time.Now().UnixNano())
+}
+
+func (l *Limiter) SetDefaultDeviceLimit(limit int) {
+	if l == nil {
+		return
+	}
+	if limit < 0 {
+		limit = 0
+	} else if limit > maxDefaultDeviceLimit {
+		limit = maxDefaultDeviceLimit
+	}
+	l.defaultDeviceLimit.Store(int32(limit))
+}
+
+func (l *Limiter) getDefaultDeviceLimit() int {
+	if l == nil {
+		return 0
+	}
+	return int(l.defaultDeviceLimit.Load())
 }
 
 func (l *Limiter) getAliveIP(uid int) int {
@@ -331,6 +352,32 @@ func (l *Limiter) pendingNewIPCount(taguuid string, uid int) int {
 	return count
 }
 
+func (l *Limiter) dropOnePendingUnknownIP(ipMap *sync.Map, uid int) bool {
+	dropped := false
+
+	ipMap.Range(func(key, value interface{}) bool {
+		if dropped {
+			return false
+		}
+
+		currentUID := value.(int)
+		if currentUID != uid {
+			return true
+		}
+
+		ip := key.(string)
+		if l.isKnownAliveIP(uid, ip) {
+			return true
+		}
+
+		ipMap.Delete(ip)
+		dropped = true
+		return false
+	})
+
+	return dropped
+}
+
 func (l *Limiter) recentReportedLocalIPCount(uid int) int {
 	now := time.Now().UnixNano()
 	lastAlivePull := l.lastAlivePull.Load()
@@ -397,20 +444,34 @@ func (l *Limiter) CheckLimit(taguuid string, ip string, noUDPsource bool) (Bucke
 	} else {
 		return nil, true
 	}
+	if deviceLimit <= 0 {
+		deviceLimit = l.getDefaultDeviceLimit()
+	}
 
 	if noUDPsource || l.tracksUDPSource() {
+		udpSourceTracked := !noUDPsource && l.tracksUDPSource()
 		aliveIP := l.getAliveIP(uid)
 		reportedLocalIP := l.recentReportedLocalIPCount(uid)
 		ipMap, created := l.getOrCreateUserOnlineIPMap(taguuid)
 		if _, loaded := ipMap.Load(ip); !loaded {
 			if !l.isKnownAliveIP(uid, ip) && deviceLimit > 0 {
+				knownDeviceCount := aliveIP + reportedLocalIP
 				pendingNewIP := l.pendingNewIPCount(taguuid, uid)
-				if deviceLimit <= aliveIP+reportedLocalIP+pendingNewIP {
-					l.logDeviceLimitReject(taguuid, uid, ip, deviceLimit, aliveIP, reportedLocalIP, pendingNewIP)
-					if created {
-						l.UserOnlineIP.Delete(taguuid)
+				if deviceLimit <= knownDeviceCount+pendingNewIP && udpSourceTracked && knownDeviceCount > 0 {
+					if l.dropOnePendingUnknownIP(ipMap, uid) && pendingNewIP > 0 {
+						pendingNewIP--
 					}
-					return nil, true
+				}
+				if deviceLimit <= knownDeviceCount+pendingNewIP {
+					if udpSourceTracked && knownDeviceCount > 0 && deviceLimit == knownDeviceCount+pendingNewIP {
+						// Allow one transient unknown IP for UDP rebind roaming on hy2/tuic.
+					} else {
+						l.logDeviceLimitReject(taguuid, uid, ip, deviceLimit, aliveIP, reportedLocalIP, pendingNewIP)
+						if created {
+							l.UserOnlineIP.Delete(taguuid)
+						}
+						return nil, true
+					}
 				}
 			}
 			ipMap.Store(ip, uid)
