@@ -20,16 +20,17 @@ func New(nodes []conf.NodeConfig, realtime conf.RealtimeConfig) (*Node, error) {
 		controllers: make([]*Controller, len(nodes)),
 		NodeInfos:   make([]*panel.NodeInfo, len(nodes)),
 	}
+	factory := defaultControlPlaneFactory()
 	for i, node := range nodes {
-		p, err := panel.New(&node)
+		controlPlane, err := factory.New(&node)
 		if err != nil {
 			return nil, err
 		}
-		info, err := p.GetNodeInfo(context.Background())
+		info, err := controlPlane.GetNodeInfo(context.Background())
 		if err != nil {
 			return nil, err
 		}
-		n.controllers[i] = NewController(p, &node, info, realtime)
+		n.controllers[i] = NewControllerWithControlPlane(controlPlane, &node, info, realtime)
 		n.NodeInfos[i] = info
 	}
 	return n, nil

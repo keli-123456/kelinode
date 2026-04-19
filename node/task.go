@@ -64,11 +64,15 @@ func (c *Controller) startTasks(node *panel.NodeInfo) {
 }
 
 func (c *Controller) reloadTask() {
-	newClient, err := panel.New(c.conf)
+	factory := c.controlPlaneFactory
+	if factory == nil {
+		factory = defaultControlPlaneFactory()
+	}
+	newControlPlane, err := factory.New(c.conf)
 	if err != nil {
 		log.Panic("Tasks reload failed")
 	}
-	c.apiClient = newClient
+	c.controlPlane = newControlPlane
 	c.nodeConfigMonitorPeriodic.Close()
 	c.nodeUserMonitorPeriodic.Close()
 	c.userReportPeriodic.Close()
@@ -101,7 +105,7 @@ func (c *Controller) executeNodeConfigCheck(ctx context.Context) (bool, error) {
 	c.configCheckMu.Lock()
 	defer c.configCheckMu.Unlock()
 
-	newN, err := c.apiClient.GetNodeInfo(ctx)
+	newN, err := c.controlPlane.GetNodeInfo(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -150,7 +154,7 @@ func (c *Controller) executeNodeUserSync(ctx context.Context) (userSyncSummary, 
 
 	// get user info (prefer delta)
 	if c.userDeltaSupported {
-		delta, derr := c.apiClient.GetUserDelta(ctx, c.userRevision)
+		delta, derr := c.controlPlane.GetUserDelta(ctx, c.userRevision)
 		if derr != nil {
 			if errors.Is(derr, panel.ErrUserDeltaNotSupported) {
 				c.userDeltaSupported = false
@@ -184,7 +188,7 @@ func (c *Controller) executeNodeUserSync(ctx context.Context) (userSyncSummary, 
 
 	// fallback to full user list API
 	if !c.userDeltaSupported {
-		newU, err := c.apiClient.GetUserList(ctx)
+		newU, err := c.controlPlane.GetUserList(ctx)
 		if err != nil {
 			return summary, err
 		}
@@ -198,7 +202,7 @@ func (c *Controller) executeNodeUserSync(ctx context.Context) (userSyncSummary, 
 	}
 
 	// get user alive
-	newA, aliveErr := c.apiClient.GetUserAlive(ctx)
+	newA, aliveErr := c.controlPlane.GetUserAlive(ctx)
 	if aliveErr != nil {
 		log.WithFields(log.Fields{
 			"tag": c.tag,
@@ -206,7 +210,7 @@ func (c *Controller) executeNodeUserSync(ctx context.Context) (userSyncSummary, 
 		}).Warn("Get user alive list failed, keeping previous snapshot")
 	} else if newA != nil {
 		c.aliveMap = newA
-		c.aliveSnapshot = c.apiClient.CachedAliveSnapshot()
+		c.aliveSnapshot = c.controlPlane.CachedAliveSnapshot()
 		c.limiter.SetAliveSnapshot(c.aliveSnapshot)
 	}
 	if len(updated) > 0 {

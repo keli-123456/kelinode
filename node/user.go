@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"errors"
 
 	panel "github.com/keli-123456/kelinode/api/v2board"
 	log "github.com/sirupsen/logrus"
@@ -33,23 +34,12 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 
 	userTraffic, rollbackUserTraffic, _ := c.server.GetUserTrafficSlice(c.tag, reportmin)
 	hadTraffic := len(userTraffic) > 0
-	if len(userTraffic) > 0 {
-		err = c.apiClient.ReportUserTraffic(ctx, userTraffic)
-		if err != nil {
-			if rollbackUserTraffic != nil {
-				rollbackUserTraffic()
-			}
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("Report user traffic failed")
-		} else {
-			log.WithField("tag", c.tag).Infof("Report %d users traffic", len(userTraffic))
-			//log.WithField("tag", c.tag).Debugf("User traffic: %+v", userTraffic)
-		}
-	}
 
 	onlineDevice, onlineErr := c.limiter.GetOnlineDevice()
+	var (
+		onlineResult []panel.OnlineUser
+		onlineData   map[int][]string
+	)
 	if onlineErr != nil {
 		log.WithFields(log.Fields{
 			"tag": c.tag,
@@ -70,15 +60,57 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 			// json structure: { UID1:["ip1","ip2"],UID2:["ip3","ip4"] }
 			data[onlineuser.UID] = append(data[onlineuser.UID], onlineuser.IP)
 		}
-		if err = c.apiClient.ReportNodeOnlineUsers(ctx, &data); err != nil {
+		onlineResult = result
+		onlineData = data
+	}
+
+	if unifiedReporter, ok := c.controlPlane.(ControlPlaneUnifiedReporter); ok && (len(userTraffic) > 0 || len(onlineData) > 0) {
+		if reportErr := unifiedReporter.ReportSnapshot(ctx, userTraffic, onlineData); reportErr == nil {
+			if len(userTraffic) > 0 {
+				log.WithField("tag", c.tag).Infof("Report %d users traffic", len(userTraffic))
+			}
+			if onlineDevice != nil && len(*onlineDevice) > 0 {
+				c.limiter.CommitOnlineDeviceReport(*onlineDevice)
+				log.WithField("tag", c.tag).Infof("Total %d online users, %d Reported", len(*onlineDevice), len(onlineResult))
+			} else if !hadTraffic {
+				log.WithField("tag", c.tag).Info("No traffic or online activity to report")
+			}
+			userTraffic = nil
+			return nil
+		} else if !errors.Is(reportErr, ErrControlPlaneUnifiedReportUnsupported) {
+			log.WithFields(log.Fields{
+				"tag": c.tag,
+				"err": reportErr,
+			}).Warn("Unified report failed, fallback to legacy reporting")
+		}
+	}
+
+	if len(userTraffic) > 0 {
+		err = c.controlPlane.ReportUserTraffic(ctx, userTraffic)
+		if err != nil {
+			if rollbackUserTraffic != nil {
+				rollbackUserTraffic()
+			}
+			log.WithFields(log.Fields{
+				"tag": c.tag,
+				"err": err,
+			}).Error("Report user traffic failed")
+		} else {
+			log.WithField("tag", c.tag).Infof("Report %d users traffic", len(userTraffic))
+			//log.WithField("tag", c.tag).Debugf("User traffic: %+v", userTraffic)
+		}
+	}
+
+	if len(onlineData) > 0 {
+		if err = c.controlPlane.ReportNodeOnlineUsers(ctx, &onlineData); err != nil {
 			log.WithFields(log.Fields{
 				"tag": c.tag,
 				"err": err,
 			}).Error("Report online users failed")
-		} else {
+		} else if onlineDevice != nil {
 			c.limiter.CommitOnlineDeviceReport(*onlineDevice)
-			log.WithField("tag", c.tag).Infof("Total %d online users, %d Reported", len(*onlineDevice), len(result))
-			//log.WithField("tag", c.tag).Debugf("Online users: %+v", data)
+			log.WithField("tag", c.tag).Infof("Total %d online users, %d Reported", len(*onlineDevice), len(onlineResult))
+			//log.WithField("tag", c.tag).Debugf("Online users: %+v", onlineData)
 		}
 	} else if !hadTraffic {
 		log.WithField("tag", c.tag).Info("No traffic or online activity to report")
