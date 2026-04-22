@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	panel "github.com/keli-123456/kelinode/api/v2board"
@@ -16,7 +17,8 @@ import (
 
 type Controller struct {
 	server                    *core.V2Core
-	apiClient                 *panel.Client
+	controlPlane              ControlPlane
+	controlPlaneFactory       ControlPlaneFactory
 	tag                       string
 	limiter                   *limiter.Limiter
 	userList                  []panel.UserInfo
@@ -47,12 +49,18 @@ type Controller struct {
 
 // NewController return a Node controller with default parameters.
 func NewController(api *panel.Client, conf *conf.NodeConfig, info *panel.NodeInfo, realtime conf.RealtimeConfig) *Controller {
+	return NewControllerWithControlPlane(newPanelControlPlane(api, conf), conf, info, realtime)
+}
+
+// NewControllerWithControlPlane return a Node controller with a custom control plane.
+func NewControllerWithControlPlane(controlPlane ControlPlane, conf *conf.NodeConfig, info *panel.NodeInfo, realtime conf.RealtimeConfig) *Controller {
 	controller := &Controller{
-		apiClient:          api,
-		info:               info,
-		conf:               conf,
-		realtimeConfig:     realtime,
-		userDeltaSupported: true,
+		controlPlane:        controlPlane,
+		controlPlaneFactory: defaultControlPlaneFactory(),
+		info:                info,
+		conf:                conf,
+		realtimeConfig:      realtime,
+		userDeltaSupported:  true,
 	}
 	if conf != nil {
 		controller.userSyncStatePath = userSyncStatePath(conf.ConfigDir, conf.APIHost, conf.NodeID)
@@ -68,11 +76,20 @@ func (c *Controller) Start(x *core.V2Core) error {
 	// First fetch Node Info
 	node := c.info
 	if node == nil {
-		c.info, err = c.apiClient.GetNodeInfo(context.Background())
+		c.info, err = c.controlPlane.GetNodeInfo(context.Background())
 		if err != nil {
 			return fmt.Errorf("get node info error: %s", err)
 		}
 		node = c.info
+	}
+	if bootstrapProvider, ok := c.controlPlane.(ControlPlaneRealtimeBootstrap); ok {
+		bootstrap, err := bootstrapProvider.GetRealtimeBootstrap(context.Background())
+		if err != nil {
+			log.WithField("err", err).Debug("control plane handshake bootstrap unavailable")
+		} else if bootstrap != nil && bootstrap.Enabled && strings.TrimSpace(bootstrap.URL) != "" && strings.TrimSpace(c.realtimeConfig.URL) == "" {
+			c.realtimeConfig.Enabled = true
+			c.realtimeConfig.URL = strings.TrimSpace(bootstrap.URL)
+		}
 	}
 	// Update user
 	c.userList, err = c.loadAndSyncUsers(context.Background())
@@ -82,15 +99,15 @@ func (c *Controller) Start(x *core.V2Core) error {
 	if len(c.userList) == 0 {
 		return errors.New("add users error: not have any user")
 	}
-	c.aliveMap, err = c.apiClient.GetUserAlive(context.Background())
+	c.aliveMap, err = c.controlPlane.GetUserAlive(context.Background())
 	if err != nil {
 		log.WithFields(log.Fields{
 			"tag": node.Tag,
 			"err": err,
 		}).Warn("Get user alive list failed, starting with cached snapshot")
-		c.aliveMap = c.apiClient.CachedAliveMap()
+		c.aliveMap = c.controlPlane.CachedAliveMap()
 	}
-	c.aliveSnapshot = c.apiClient.CachedAliveSnapshot()
+	c.aliveSnapshot = c.controlPlane.CachedAliveSnapshot()
 	if c.aliveMap == nil {
 		c.aliveMap = make(map[int]int)
 	}
@@ -131,7 +148,7 @@ func (c *Controller) loadAndSyncUsers(ctx context.Context) ([]panel.UserInfo, er
 	// Try to warm start from local cache (revision + user list), then catch up via delta.
 	if c.userDeltaSupported && c.userSyncStatePath != "" {
 		if state, err := loadUserSyncState(c.userSyncStatePath); err == nil && state != nil && len(state.Users) > 0 && state.Revision > 0 {
-			if delta, err := c.apiClient.GetUserDelta(ctx, state.Revision); err == nil && delta != nil {
+			if delta, err := c.controlPlane.GetUserDelta(ctx, state.Revision); err == nil && delta != nil {
 				if delta.Full {
 					c.userRevision = delta.Revision
 					_ = saveUserSyncState(c.userSyncStatePath, &userSyncStateFile{Revision: c.userRevision, Users: delta.Users})
@@ -149,7 +166,7 @@ func (c *Controller) loadAndSyncUsers(ctx context.Context) ([]panel.UserInfo, er
 
 	// Fallback: fetch from panel.
 	if c.userDeltaSupported {
-		delta, err := c.apiClient.GetUserDelta(ctx, 0)
+		delta, err := c.controlPlane.GetUserDelta(ctx, 0)
 		if err != nil {
 			if errors.Is(err, panel.ErrUserDeltaNotSupported) {
 				c.userDeltaSupported = false
@@ -169,7 +186,7 @@ func (c *Controller) loadAndSyncUsers(ctx context.Context) ([]panel.UserInfo, er
 		}
 	}
 
-	users, err := c.apiClient.GetUserList(ctx)
+	users, err := c.controlPlane.GetUserList(ctx)
 	if err != nil {
 		return nil, err
 	}

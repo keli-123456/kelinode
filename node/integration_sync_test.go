@@ -55,8 +55,8 @@ func TestExecuteNodeConfigCheckSignalsReloadOnConfigChange(t *testing.T) {
 	}
 
 	controller := &Controller{
-		apiClient: client,
-		server:    &v2core.V2Core{ReloadCh: make(chan struct{}, 1)},
+		controlPlane: client,
+		server:       &v2core.V2Core{ReloadCh: make(chan struct{}, 1)},
 	}
 
 	mu.Lock()
@@ -106,8 +106,8 @@ func TestExecuteNodeConfigCheckReturnsNoChange(t *testing.T) {
 	}
 
 	controller := &Controller{
-		apiClient: client,
-		server:    &v2core.V2Core{ReloadCh: make(chan struct{}, 1)},
+		controlPlane: client,
+		server:       &v2core.V2Core{ReloadCh: make(chan struct{}, 1)},
 	}
 
 	changed, err := controller.executeNodeConfigCheck(context.Background())
