@@ -49,7 +49,17 @@ docker run -d --name v2node \
 - [Docker Deployment Guide](./docs/docker-deployment.md)
 - [Xray 26.3.27 Upgrade Release Checklist](./docs/release-checklist-xray-26.3.27.md)
 
-## 构建
+## 测试与构建
+
+本项目需要 Go 1.26+，并依赖 `GOEXPERIMENT=jsonv2`。优先使用仓库内的 Makefile，避免遗漏实验开关：
+
+```bash
+make test
+make build VERSION=dev
+```
+
+等价的手动构建命令：
+
 ``` bash
 GOEXPERIMENT=jsonv2 go build -v -o build_assets/v2node -trimpath -ldflags "-X 'github.com/keli-123456/kelinode/cmd.version=$version' -s -w -buildid="
 ```
