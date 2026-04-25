@@ -140,7 +140,7 @@ func (p *panelControlPlane) GetRealtimeBootstrap(ctx context.Context) (*Realtime
 		}
 	}
 
-	resp, err := p.doJSONRequest(ctx, http.MethodPost, "/api/v2/server/handshake", nil)
+	resp, err := p.doJSONRequest(ctx, http.MethodPost, panel.PathV2ServerHandshake, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +202,7 @@ func (p *panelControlPlane) ReportSnapshot(ctx context.Context, userTraffic []pa
 		payload["online"] = onlineCount
 	}
 
-	resp, err := p.doJSONRequest(ctx, http.MethodPost, "/api/v2/server/report", payload)
+	resp, err := p.doJSONRequest(ctx, http.MethodPost, panel.PathV2ServerReport, payload)
 	if err != nil {
 		return err
 	}

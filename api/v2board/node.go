@@ -124,13 +124,12 @@ type EncSettings struct {
 }
 
 func (c *Client) GetNodeInfo(ctx context.Context) (node *NodeInfo, err error) {
-	const path = "/api/v2/server/config"
 	r, err := c.client.
 		R().
 		SetContext(ctx).
 		SetHeader("If-None-Match", c.nodeEtag).
 		ForceContentType("application/json").
-		Get(path)
+		Get(PathV2ServerConfig)
 
 	if err != nil {
 		if errors.Is(err, context.Canceled) {

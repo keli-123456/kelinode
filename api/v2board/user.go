@@ -41,9 +41,9 @@ type UserDeltaBody struct {
 }
 
 type AliveMap struct {
-	Alive   map[int]int      `json:"alive"`
+	Alive    map[int]int      `json:"alive"`
 	AliveIPs map[int][]string `json:"alive_ips"`
-	Mode    int              `json:"mode"`
+	Mode     int              `json:"mode"`
 }
 
 func cloneAliveMap(src map[int]int) map[int]int {
@@ -97,13 +97,12 @@ func (c *Client) CachedAliveSnapshot() *AliveMap {
 
 // GetUserList will pull user from v2board
 func (c *Client) GetUserList(ctx context.Context) ([]UserInfo, error) {
-	const path = "/api/v1/server/UniProxy/user"
 	r, err := c.client.R().
 		SetContext(ctx).
 		SetHeader("If-None-Match", c.userEtag).
-		SetHeader("X-Response-Format", "msgpack").
+		SetHeader(HeaderResponseFormat, ResponseFormatMsgpack).
 		SetDoNotParseResponse(true).
-		Get(path)
+		Get(PathV1UniProxyUser)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil, nil
@@ -122,7 +121,7 @@ func (c *Client) GetUserList(ctx context.Context) ([]UserInfo, error) {
 		return nil, nil
 	}
 	userlist := &UserListBody{}
-	if strings.Contains(r.Header().Get("Content-Type"), "application/x-msgpack") {
+	if strings.Contains(r.Header().Get("Content-Type"), ContentTypeMsgpack) {
 		decoder := msgpack.NewDecoder(r.RawResponse.Body)
 		if err := decoder.Decode(userlist); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
@@ -174,14 +173,12 @@ func (c *Client) GetUserList(ctx context.Context) ([]UserInfo, error) {
 }
 
 func (c *Client) GetUserDelta(ctx context.Context, since int64) (*UserDeltaBody, error) {
-	const path = "/api/v1/server/UniProxy/user_delta"
-
 	r, err := c.client.R().
 		SetContext(ctx).
 		SetQueryParam("since", strconv.FormatInt(since, 10)).
-		SetHeader("X-Response-Format", "msgpack").
+		SetHeader(HeaderResponseFormat, ResponseFormatMsgpack).
 		ForceContentType("application/json").
-		Get(path)
+		Get(PathV1UniProxyUserDelta)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil, nil
@@ -213,11 +210,10 @@ func (c *Client) GetUserAlive(ctx context.Context) (map[int]int, error) {
 	if c.AliveMap == nil {
 		c.AliveMap = &AliveMap{}
 	}
-	const path = "/api/v1/server/UniProxy/alivelist"
 	r, err := c.client.R().
 		SetContext(ctx).
 		ForceContentType("application/json").
-		Get(path)
+		Get(PathV1UniProxyAliveList)
 
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -262,12 +258,11 @@ func (c *Client) ReportUserTraffic(ctx context.Context, userTraffic []UserTraffi
 	for i := range userTraffic {
 		data[userTraffic[i].UID] = []int64{userTraffic[i].Upload, userTraffic[i].Download}
 	}
-	const path = "/api/v1/server/UniProxy/push"
 	r, err := c.client.R().
 		SetContext(ctx).
 		SetBody(data).
 		ForceContentType("application/json").
-		Post(path)
+		Post(PathV1UniProxyPush)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil
@@ -281,12 +276,11 @@ func (c *Client) ReportUserTraffic(ctx context.Context, userTraffic []UserTraffi
 }
 
 func (c *Client) ReportNodeOnlineUsers(ctx context.Context, data *map[int][]string) error {
-	const path = "/api/v1/server/UniProxy/alive"
 	r, err := c.client.R().
 		SetContext(ctx).
 		SetBody(data).
 		ForceContentType("application/json").
-		Post(path)
+		Post(PathV1UniProxyAlive)
 
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
