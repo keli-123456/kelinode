@@ -20,10 +20,12 @@ func TestNodeAPIContractConstants(t *testing.T) {
 		"v2.server.config":    PathV2ServerConfig,
 		"v2.server.handshake": PathV2ServerHandshake,
 		"v2.server.report":    PathV2ServerReport,
+		"v2.machine.nodes":    PathV2MachineNodes,
+		"v2.machine.status":   PathV2MachineStatus,
 	}
 
 	expected := map[string]string{
-		"version":             "2026-04-24",
+		"version":             "2026-04-26",
 		"v1.uniproxy.config":  "/api/v1/server/UniProxy/config",
 		"v1.uniproxy.user":    "/api/v1/server/UniProxy/user",
 		"v1.uniproxy.delta":   "/api/v1/server/UniProxy/user_delta",
@@ -34,6 +36,8 @@ func TestNodeAPIContractConstants(t *testing.T) {
 		"v2.server.config":    "/api/v2/server/config",
 		"v2.server.handshake": "/api/v2/server/handshake",
 		"v2.server.report":    "/api/v2/server/report",
+		"v2.machine.nodes":    "/api/v2/server/machine/nodes",
+		"v2.machine.status":   "/api/v2/server/machine/status",
 	}
 
 	for name, want := range expected {

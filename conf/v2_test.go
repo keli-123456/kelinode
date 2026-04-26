@@ -96,6 +96,126 @@ nodes:
 	}
 }
 
+func TestLoadFromPathConfigV2MachineMode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+panel:
+  url: "https://panel.example.com"
+  token: "shared-token"
+machine:
+  enabled: true
+nodes:
+  - node_id: 1
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	cfg := New()
+	if err := cfg.LoadFromPath(path); err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+
+	if !cfg.MachineConfig.Enabled {
+		t.Fatalf("expected machine mode enabled")
+	}
+	if !cfg.MachineConfig.ContinueOnError {
+		t.Fatalf("expected machine mode to default continue_on_error to true")
+	}
+}
+
+func TestLoadFromPathConfigV2MachineModeMultiplePanels(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+machine:
+  enabled: true
+nodes:
+  - url: "https://panel-a.example.com"
+    token: "token-a"
+    node_id: 1
+  - url: "https://panel-b.example.com"
+    token: "token-b"
+    node_id: 8
+    config_dir: "/srv/panel-b-node-8"
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	cfg := New()
+	if err := cfg.LoadFromPath(path); err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+
+	if len(cfg.NodeConfigs) != 2 {
+		t.Fatalf("unexpected node count: %d", len(cfg.NodeConfigs))
+	}
+	if cfg.NodeConfigs[0].APIHost != "https://panel-a.example.com" || cfg.NodeConfigs[0].Key != "token-a" {
+		t.Fatalf("unexpected first node config: %+v", cfg.NodeConfigs[0])
+	}
+	if cfg.NodeConfigs[0].ConfigDir != "/etc/v2node/node-1" {
+		t.Fatalf("unexpected first node config dir: %s", cfg.NodeConfigs[0].ConfigDir)
+	}
+	if cfg.NodeConfigs[1].APIHost != "https://panel-b.example.com" || cfg.NodeConfigs[1].ConfigDir != "/srv/panel-b-node-8" {
+		t.Fatalf("unexpected second node config: %+v", cfg.NodeConfigs[1])
+	}
+}
+
+func TestLoadFromPathConfigV2MachineProfiles(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+panel:
+  timeout: 12
+machine:
+  profiles:
+    - name: "site-a"
+      url: "https://panel-a.example.com"
+      token: "machine-token-a"
+      machine_id: 11
+    - name: "site-b"
+      url: "https://panel-b.example.com"
+      token: "machine-token-b"
+      machine_id: 22
+      timeout: 20
+      config_dir: "/srv/site-b"
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	cfg := New()
+	if err := cfg.LoadFromPath(path); err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+
+	if !cfg.MachineConfig.Enabled || !cfg.MachineConfig.ContinueOnError {
+		t.Fatalf("unexpected machine config: %+v", cfg.MachineConfig)
+	}
+	if len(cfg.NodeConfigs) != 0 {
+		t.Fatalf("expected profile-only config to defer node resolution, got %+v", cfg.NodeConfigs)
+	}
+	if len(cfg.MachineConfig.Profiles) != 2 {
+		t.Fatalf("unexpected machine profile count: %d", len(cfg.MachineConfig.Profiles))
+	}
+	first := cfg.MachineConfig.Profiles[0]
+	if first.Name != "site-a" || first.APIHost != "https://panel-a.example.com" || first.Key != "machine-token-a" || first.MachineID != 11 || first.Timeout != 12 {
+		t.Fatalf("unexpected first profile: %+v", first)
+	}
+	second := cfg.MachineConfig.Profiles[1]
+	if second.Timeout != 20 || second.ConfigDir != "/srv/site-b" {
+		t.Fatalf("unexpected second profile: %+v", second)
+	}
+}
+
 func TestResolveConfigPath(t *testing.T) {
 	t.Parallel()
 

@@ -30,25 +30,27 @@ var dialRealtimeWS = func(ctx context.Context, rawURL string) (realtimeWSConn, e
 }
 
 type realtimeMessage struct {
-	Type     string                  `json:"type"`
-	Message  string                  `json:"message,omitempty"`
-	EventID  string                  `json:"event_id,omitempty"`
-	Topic    string                  `json:"topic"`
-	Reason   string                  `json:"reason"`
-	Status   string                  `json:"status,omitempty"`
-	Revision int64                   `json:"revision"`
-	ServerID int                     `json:"server_id,omitempty"`
-	Ts       int64                   `json:"ts"`
-	Token    string                  `json:"token,omitempty"`
-	NodeID   string                  `json:"node_id,omitempty"`
-	NodeType string                  `json:"node_type,omitempty"`
-	Health   *RealtimeHealthSnapshot `json:"health,omitempty"`
+	Type      string                  `json:"type"`
+	Message   string                  `json:"message,omitempty"`
+	EventID   string                  `json:"event_id,omitempty"`
+	Topic     string                  `json:"topic"`
+	Reason    string                  `json:"reason"`
+	Status    string                  `json:"status,omitempty"`
+	Revision  int64                   `json:"revision"`
+	ServerID  int                     `json:"server_id,omitempty"`
+	Ts        int64                   `json:"ts"`
+	Token     string                  `json:"token,omitempty"`
+	NodeID    string                  `json:"node_id,omitempty"`
+	MachineID int                     `json:"machine_id,omitempty"`
+	NodeType  string                  `json:"node_type,omitempty"`
+	Health    *RealtimeHealthSnapshot `json:"health,omitempty"`
 }
 
 type RealtimeOptions struct {
 	URL            string
 	Token          string
 	NodeID         int
+	MachineID      int
 	NodeType       string
 	PingInterval   time.Duration
 	ReconnectDelay time.Duration
@@ -147,12 +149,13 @@ func (c *RealtimeClient) connectAndServe() error {
 	}
 
 	if err := writeJSON(realtimeMessage{
-		Type:     "ping",
-		Ts:       time.Now().Unix(),
-		Token:    c.opts.Token,
-		NodeID:   strconv.Itoa(c.opts.NodeID),
-		NodeType: c.opts.NodeType,
-		Health:   GetRealtimeHealthSnapshot(),
+		Type:      "ping",
+		Ts:        time.Now().Unix(),
+		Token:     c.opts.Token,
+		NodeID:    strconv.Itoa(c.opts.NodeID),
+		MachineID: c.opts.MachineID,
+		NodeType:  c.opts.NodeType,
+		Health:    GetRealtimeHealthSnapshot(),
 	}); err != nil {
 		return err
 	}
@@ -251,6 +254,9 @@ func (c *RealtimeClient) buildDialURL() (string, error) {
 	query.Set("token", c.opts.Token)
 	query.Set("node_id", strconv.Itoa(c.opts.NodeID))
 	query.Set("node_type", c.opts.NodeType)
+	if c.opts.MachineID > 0 {
+		query.Set("machine_id", strconv.Itoa(c.opts.MachineID))
+	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
 }
@@ -326,6 +332,7 @@ func (c *Controller) resolveRealtimeOptions() *RealtimeOptions {
 		URL:            localURL,
 		Token:          c.conf.Key,
 		NodeID:         c.conf.NodeID,
+		MachineID:      c.conf.MachineID,
 		NodeType:       "v2node",
 		PingInterval:   pingInterval,
 		ReconnectDelay: reconnectDelay,

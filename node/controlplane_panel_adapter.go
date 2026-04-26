@@ -27,9 +27,10 @@ const (
 type panelControlPlane struct {
 	client *panel.Client
 
-	apiHost string
-	token   string
-	nodeID  int
+	apiHost   string
+	token     string
+	nodeID    int
+	machineID int
 
 	httpClient *http.Client
 
@@ -50,6 +51,7 @@ func newPanelControlPlane(client *panel.Client, nodeConfig *conf.NodeConfig) *pa
 		p.apiHost = strings.TrimSpace(nodeConfig.APIHost)
 		p.token = strings.TrimSpace(nodeConfig.Key)
 		p.nodeID = nodeConfig.NodeID
+		p.machineID = nodeConfig.MachineID
 	}
 	if client != nil {
 		if p.apiHost == "" {
@@ -60,6 +62,9 @@ func newPanelControlPlane(client *panel.Client, nodeConfig *conf.NodeConfig) *pa
 		}
 		if p.nodeID == 0 {
 			p.nodeID = client.NodeId
+		}
+		if p.machineID == 0 {
+			p.machineID = client.MachineID
 		}
 	}
 
@@ -259,6 +264,9 @@ func (p *panelControlPlane) buildEndpoint(path string) (string, error) {
 	q.Set("token", p.token)
 	q.Set("node_id", strconv.Itoa(p.nodeID))
 	q.Set("node_type", "v2node")
+	if p.machineID > 0 {
+		q.Set("machine_id", strconv.Itoa(p.machineID))
+	}
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }

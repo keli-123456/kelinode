@@ -25,8 +25,37 @@ realtime:
   ping_interval: 30
   reconnect_interval: 5
 
+# Machine mode is opt-in. Old single-node and static multi-node configs keep
+# their existing fail-fast startup behavior when this block is omitted.
+# machine:
+#   enabled: true
+#   continue_on_error: true
+#   profiles:
+#     - name: "site-a"
+#       url: "https://panel-a.example.com"
+#       token: "machine-token-a"
+#       machine_id: 1
+#     - name: "site-b"
+#       url: "https://panel-b.example.com"
+#       token: "machine-token-b"
+#       machine_id: 2
+
 # Multi-node example:
 # nodes:
 #   - node_id: 1
 #   - node_id: 2
 #     config_dir: "/etc/v2node/node-2"
+#
+# Static multi-site machine example:
+# machine:
+#   enabled: true
+#   continue_on_error: true
+# nodes:
+#   - url: "https://panel-a.example.com"
+#     token: "panel-a-token"
+#     node_id: 1
+#     config_dir: "/etc/v2node/panel-a-node-1"
+#   - url: "https://panel-b.example.com"
+#     token: "panel-b-token"
+#     node_id: 8
+#     config_dir: "/etc/v2node/panel-b-node-8"

@@ -16,6 +16,7 @@ type Client struct {
 	APIHost          string
 	Token            string
 	NodeId           int
+	MachineID        int
 	ConfigDir        string
 	nodeEtag         string
 	userEtag         string
@@ -47,11 +48,15 @@ func New(c *conf.NodeConfig) (*Client, error) {
 		"node_id":   strconv.Itoa(c.NodeID),
 		"token":     c.Key,
 	})
+	if c.MachineID > 0 {
+		client.SetQueryParam("machine_id", strconv.Itoa(c.MachineID))
+	}
 	return &Client{
 		client:    client,
 		Token:     c.Key,
 		APIHost:   c.APIHost,
 		NodeId:    c.NodeID,
+		MachineID: c.MachineID,
 		ConfigDir: c.ConfigDir,
 		UserList:  &UserListBody{},
 		AliveMap:  &AliveMap{},

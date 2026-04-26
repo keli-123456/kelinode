@@ -1,7 +1,7 @@
 package panel
 
 const (
-	NodeAPIContractVersion = "2026-04-24"
+	NodeAPIContractVersion = "2026-04-26"
 
 	PathV1UniProxyConfig    = "/api/v1/server/UniProxy/config"
 	PathV1UniProxyUser      = "/api/v1/server/UniProxy/user"
@@ -14,6 +14,8 @@ const (
 	PathV2ServerConfig    = "/api/v2/server/config"
 	PathV2ServerHandshake = "/api/v2/server/handshake"
 	PathV2ServerReport    = "/api/v2/server/report"
+	PathV2MachineNodes    = "/api/v2/server/machine/nodes"
+	PathV2MachineStatus   = "/api/v2/server/machine/status"
 
 	HeaderResponseFormat  = "X-Response-Format"
 	ResponseFormatMsgpack = "msgpack"

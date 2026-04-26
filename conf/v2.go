@@ -14,16 +14,18 @@ type configV2 struct {
 	Log      logConfigV2      `mapstructure:"log"`
 	Runtime  runtimeConfigV2  `mapstructure:"runtime"`
 	Realtime realtimeConfigV2 `mapstructure:"realtime"`
+	Machine  machineConfigV2  `mapstructure:"machine"`
 	Health   int              `mapstructure:"health_port"`
 	Pprof    int              `mapstructure:"pprof_port"`
 	Nodes    []nodeConfigV2   `mapstructure:"nodes"`
 }
 
 type panelConfigV2 struct {
-	URL     string `mapstructure:"url"`
-	Token   string `mapstructure:"token"`
-	NodeID  int    `mapstructure:"node_id"`
-	Timeout int    `mapstructure:"timeout"`
+	URL       string `mapstructure:"url"`
+	Token     string `mapstructure:"token"`
+	NodeID    int    `mapstructure:"node_id"`
+	MachineID int    `mapstructure:"machine_id"`
+	Timeout   int    `mapstructure:"timeout"`
 }
 
 type kernelConfigV2 struct {
@@ -50,10 +52,26 @@ type realtimeConfigV2 struct {
 	ReconnectInterval int    `mapstructure:"reconnect_interval"`
 }
 
+type machineConfigV2 struct {
+	Enabled         bool                     `mapstructure:"enabled"`
+	ContinueOnError *bool                    `mapstructure:"continue_on_error"`
+	Profiles        []machineProfileConfigV2 `mapstructure:"profiles"`
+}
+
+type machineProfileConfigV2 struct {
+	Name      string `mapstructure:"name"`
+	URL       string `mapstructure:"url"`
+	Token     string `mapstructure:"token"`
+	MachineID int    `mapstructure:"machine_id"`
+	Timeout   int    `mapstructure:"timeout"`
+	ConfigDir string `mapstructure:"config_dir"`
+}
+
 type nodeConfigV2 struct {
 	URL       string `mapstructure:"url"`
 	Token     string `mapstructure:"token"`
 	NodeID    int    `mapstructure:"node_id"`
+	MachineID int    `mapstructure:"machine_id"`
 	Timeout   int    `mapstructure:"timeout"`
 	ConfigDir string `mapstructure:"config_dir"`
 }
@@ -62,7 +80,7 @@ func isConfigV2(v *viper.Viper) bool {
 	if v == nil {
 		return false
 	}
-	return v.IsSet("panel") || v.IsSet("kernel") || v.IsSet("runtime") || v.IsSet("health_port")
+	return v.IsSet("panel") || v.IsSet("kernel") || v.IsSet("runtime") || v.IsSet("health_port") || v.IsSet("machine")
 }
 
 func (p *Conf) loadFromV2(v *viper.Viper) error {
@@ -102,13 +120,48 @@ func (p *Conf) loadFromV2(v *viper.Viper) error {
 	if cfg.Realtime.ReconnectInterval > 0 {
 		p.RealtimeConfig.ReconnectInterval = cfg.Realtime.ReconnectInterval
 	}
+	p.MachineConfig.Enabled = cfg.Machine.Enabled || len(cfg.Machine.Profiles) > 0
+	if cfg.Machine.ContinueOnError != nil {
+		p.MachineConfig.ContinueOnError = *cfg.Machine.ContinueOnError
+	} else if p.MachineConfig.Enabled {
+		p.MachineConfig.ContinueOnError = true
+	}
 
 	baseAPIHost := strings.TrimSpace(cfg.Panel.URL)
 	baseToken := strings.TrimSpace(cfg.Panel.Token)
 	baseTimeout := cfg.Panel.Timeout
 	baseConfigDir := NormalizeConfigDir(cfg.Kernel.ConfigDir)
+	machineProfiles := make([]MachineProfileConfig, 0, len(cfg.Machine.Profiles))
+	for _, row := range cfg.Machine.Profiles {
+		apiHost := firstNonEmpty(strings.TrimSpace(row.URL), baseAPIHost)
+		token := firstNonEmpty(strings.TrimSpace(row.Token), baseToken)
+		timeout := row.Timeout
+		if timeout <= 0 {
+			timeout = baseTimeout
+		}
+		name := strings.TrimSpace(row.Name)
+		if name == "" && row.MachineID > 0 {
+			name = fmt.Sprintf("machine-%d", row.MachineID)
+		}
+		if apiHost == "" || token == "" || row.MachineID <= 0 {
+			return fmt.Errorf("config v2 machine profiles require url, token and machine_id")
+		}
+		machineProfiles = append(machineProfiles, MachineProfileConfig{
+			Name:      name,
+			APIHost:   apiHost,
+			Key:       token,
+			MachineID: row.MachineID,
+			Timeout:   timeout,
+			ConfigDir: strings.TrimSpace(row.ConfigDir),
+		})
+	}
+	p.MachineConfig.Profiles = machineProfiles
 
 	if len(cfg.Nodes) == 0 {
+		if len(machineProfiles) > 0 {
+			p.NodeConfigs = nil
+			return nil
+		}
 		if baseAPIHost == "" || baseToken == "" || cfg.Panel.NodeID <= 0 {
 			return fmt.Errorf("config v2 requires panel.url, panel.token and panel.node_id when nodes is empty")
 		}
@@ -117,6 +170,7 @@ func (p *Conf) loadFromV2(v *viper.Viper) error {
 				APIHost:   baseAPIHost,
 				NodeID:    cfg.Panel.NodeID,
 				Key:       baseToken,
+				MachineID: cfg.Panel.MachineID,
 				Timeout:   baseTimeout,
 				ConfigDir: baseConfigDir,
 			},
@@ -140,6 +194,7 @@ func (p *Conf) loadFromV2(v *viper.Viper) error {
 			APIHost:   apiHost,
 			NodeID:    row.NodeID,
 			Key:       token,
+			MachineID: firstPositive(row.MachineID, cfg.Panel.MachineID),
 			Timeout:   timeout,
 			ConfigDir: resolveNodeConfigDir(baseConfigDir, row.ConfigDir, row.NodeID, multiNode),
 		})
@@ -166,4 +221,13 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstPositive(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	_ "net/http/pprof"
@@ -23,6 +24,19 @@ var (
 	watch            bool
 	newNodeForReload = func(nodes []conf.NodeConfig, realtime conf.RealtimeConfig) (*node.Node, error) {
 		return node.New(nodes, realtime)
+	}
+	newMachineNodeForReload = func(nodes []conf.NodeConfig, realtime conf.RealtimeConfig, machine conf.MachineConfig) (*node.Node, error) {
+		return node.NewMachine(nodes, realtime, node.MachineOptions{
+			ContinueOnError: machine.ContinueOnError,
+		})
+	}
+	prepareNodeConfigsForReload = func(ctx context.Context, cfg *conf.Conf) error {
+		return node.ResolveMachineNodeConfigs(ctx, cfg)
+	}
+	reconcileMachineForReload = func(nodesInstance *node.Node, cfg *conf.Conf, coreInstance *core.V2Core) (*node.ReconcileResult, error) {
+		return nodesInstance.Reconcile(context.Background(), cfg.NodeConfigs, cfg.RealtimeConfig, coreInstance, node.MachineOptions{
+			ContinueOnError: cfg.MachineConfig.ContinueOnError,
+		})
 	}
 	newCoreForReload   = func(cfg *conf.Conf) *core.V2Core { return core.New(cfg) }
 	startCoreForReload = func(coreInstance *core.V2Core, nodesInstance *node.Node) error {
@@ -95,6 +109,10 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		}
 		log.SetOutput(f)
 	}
+	if err := prepareNodeConfigsForReload(context.Background(), c); err != nil {
+		log.WithField("err", err).Error("Resolve machine profiles failed")
+		return
+	}
 	appliedRuntime := applyRuntimeSettings(c.RuntimeConfig, runtimeState)
 	health.UpdateConfig(c, appliedRuntime)
 	// Enable pprof if configured
@@ -110,11 +128,12 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	//init limiter
 	limiter.Init()
 	//get node info
-	nodes, err := node.New(c.NodeConfigs, c.RealtimeConfig)
+	nodes, err := newNodeForConfig(c)
 	if err != nil {
 		log.WithField("err", err).Error("Get node info failed")
 		return
 	}
+	logMachineNodeFailures(nodes)
 	log.Info("Got nodes info from server")
 	//core
 	var reloadCh = make(chan struct{}, 1)
@@ -177,14 +196,6 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core, health *heal
 		oldReloadCh = (*v2core).ReloadCh
 	}
 
-	if err := closeNodeForReload(*nodes); err != nil {
-		return err
-	}
-
-	if err := closeCoreForReload(*v2core); err != nil {
-		return err
-	}
-
 	newConf := conf.New()
 	if err := newConf.LoadFromPath(config); err != nil {
 		return err
@@ -212,12 +223,46 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core, health *heal
 			log.SetOutput(f)
 		}
 	}
+	if err := prepareNodeConfigsForReload(context.Background(), newConf); err != nil {
+		return err
+	}
 	appliedRuntime := applyRuntimeSettings(newConf.RuntimeConfig, runtimeState)
 
-	newNodes, err := newNodeForReload(newConf.NodeConfigs, newConf.RealtimeConfig)
+	if newConf.MachineConfig.Enabled && *nodes != nil && *v2core != nil {
+		result, err := reconcileMachineForReload(*nodes, newConf, *v2core)
+		if err != nil {
+			return err
+		}
+		if result != nil && !result.FullReloadRequired {
+			log.WithFields(log.Fields{
+				"added":     result.Added,
+				"removed":   result.Removed,
+				"restarted": result.Restarted,
+				"unchanged": result.Unchanged,
+				"skipped":   result.Skipped,
+			}).Info("Machine mode reconcile completed")
+			if health != nil {
+				health.UpdateConfig(newConf, appliedRuntime)
+			}
+			runtime.GC()
+			return nil
+		}
+		log.Info("Machine mode reconcile requires full reload")
+	}
+
+	if err := closeNodeForReload(*nodes); err != nil {
+		return err
+	}
+
+	if err := closeCoreForReload(*v2core); err != nil {
+		return err
+	}
+
+	newNodes, err := newNodeForConfig(newConf)
 	if err != nil {
 		return err
 	}
+	logMachineNodeFailures(newNodes)
 
 	newCore := newCoreForReload(newConf)
 	// Reattach reload channel
@@ -238,4 +283,28 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core, health *heal
 
 	runtime.GC()
 	return nil
+}
+
+func newNodeForConfig(cfg *conf.Conf) (*node.Node, error) {
+	if cfg != nil && cfg.MachineConfig.Enabled {
+		log.WithFields(log.Fields{
+			"node_count":        len(cfg.NodeConfigs),
+			"continue_on_error": cfg.MachineConfig.ContinueOnError,
+		}).Info("Machine mode enabled")
+		return newMachineNodeForReload(cfg.NodeConfigs, cfg.RealtimeConfig, cfg.MachineConfig)
+	}
+	return newNodeForReload(cfg.NodeConfigs, cfg.RealtimeConfig)
+}
+
+func logMachineNodeFailures(nodesInstance *node.Node) {
+	if nodesInstance == nil {
+		return
+	}
+	for _, failure := range nodesInstance.Failures() {
+		log.WithFields(log.Fields{
+			"api_host": failure.Config.APIHost,
+			"node_id":  failure.Config.NodeID,
+			"err":      failure.Err,
+		}).Warn("Node skipped in machine mode")
+	}
 }

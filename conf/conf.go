@@ -13,6 +13,7 @@ const DefaultNodeConfigDir = "/etc/v2node"
 type Conf struct {
 	LogConfig      LogConfig      `mapstructure:"Log"`
 	NodeConfigs    []NodeConfig   `mapstructure:"Nodes"`
+	MachineConfig  MachineConfig  `mapstructure:"Machine"`
 	PprofPort      int            `mapstructure:"PprofPort"`
 	HealthPort     int            `mapstructure:"HealthPort"`
 	RuntimeConfig  RuntimeConfig  `mapstructure:"Runtime"`
@@ -35,6 +36,22 @@ type NodeConfig struct {
 	APIHost   string `mapstructure:"ApiHost"`
 	NodeID    int    `mapstructure:"NodeID"`
 	Key       string `mapstructure:"ApiKey"`
+	MachineID int    `mapstructure:"MachineID"`
+	Timeout   int    `mapstructure:"Timeout"`
+	ConfigDir string `mapstructure:"ConfigDir"`
+}
+
+type MachineConfig struct {
+	Enabled         bool                   `mapstructure:"Enabled"`
+	ContinueOnError bool                   `mapstructure:"ContinueOnError"`
+	Profiles        []MachineProfileConfig `mapstructure:"Profiles"`
+}
+
+type MachineProfileConfig struct {
+	Name      string `mapstructure:"Name"`
+	APIHost   string `mapstructure:"ApiHost"`
+	Key       string `mapstructure:"ApiKey"`
+	MachineID int    `mapstructure:"MachineID"`
 	Timeout   int    `mapstructure:"Timeout"`
 	ConfigDir string `mapstructure:"ConfigDir"`
 }
@@ -83,12 +100,14 @@ func (p *Conf) LoadFromPath(filePath string) error {
 			return err
 		}
 		normalizeNodeConfigs(p.NodeConfigs)
+		normalizeMachineProfiles(p.MachineConfig.Profiles)
 		return nil
 	}
 	if err := v.Unmarshal(p); err != nil {
 		return fmt.Errorf("unmarshal config error: %s", err)
 	}
 	normalizeNodeConfigs(p.NodeConfigs)
+	normalizeMachineProfiles(p.MachineConfig.Profiles)
 	return nil
 }
 
@@ -121,6 +140,14 @@ func ResolveConfigPath(filePath string) string {
 func normalizeNodeConfigs(nodes []NodeConfig) {
 	for i := range nodes {
 		nodes[i].ConfigDir = NormalizeConfigDir(nodes[i].ConfigDir)
+	}
+}
+
+func normalizeMachineProfiles(profiles []MachineProfileConfig) {
+	for i := range profiles {
+		if profiles[i].ConfigDir != "" {
+			profiles[i].ConfigDir = NormalizeConfigDir(profiles[i].ConfigDir)
+		}
 	}
 }
 
