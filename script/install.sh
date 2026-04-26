@@ -40,6 +40,10 @@ VERSION_ARG=""
 API_HOST_ARG=""
 NODE_ID_ARG=""
 API_KEY_ARG=""
+MACHINE_URL_ARG=""
+MACHINE_ID_ARG=""
+MACHINE_TOKEN_ARG=""
+MACHINE_NAME_ARG=""
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -50,8 +54,17 @@ parse_args() {
                 NODE_ID_ARG="$2"; shift 2 ;;
             --api-key)
                 API_KEY_ARG="$2"; shift 2 ;;
+            --machine-url)
+                MACHINE_URL_ARG="$2"; shift 2 ;;
+            --machine-id)
+                MACHINE_ID_ARG="$2"; shift 2 ;;
+            --machine-token)
+                MACHINE_TOKEN_ARG="$2"; shift 2 ;;
+            --machine-name)
+                MACHINE_NAME_ARG="$2"; shift 2 ;;
             -h|--help)
                 echo "用法: $0 [版本号] [--api-host URL] [--node-id ID] [--api-key KEY]"
+                echo "     $0 [版本号] --machine-url URL --machine-id ID --machine-token TOKEN [--machine-name NAME]"
                 exit 0 ;;
             --*)
                 echo "未知参数: $1"; exit 1 ;;
@@ -64,6 +77,27 @@ parse_args() {
                 fi ;;
         esac
     done
+}
+
+has_machine_args() {
+    [[ -n "$MACHINE_URL_ARG" || -n "$MACHINE_ID_ARG" || -n "$MACHINE_TOKEN_ARG" || -n "$MACHINE_NAME_ARG" ]]
+}
+
+validate_args() {
+    if has_machine_args; then
+        if [[ -n "$API_HOST_ARG" || -n "$NODE_ID_ARG" || -n "$API_KEY_ARG" ]]; then
+            echo -e "${red}不能同时使用单节点参数和 machine 参数${plain}"
+            exit 1
+        fi
+        if [[ -z "$MACHINE_URL_ARG" || -z "$MACHINE_ID_ARG" || -z "$MACHINE_TOKEN_ARG" ]]; then
+            echo -e "${red}machine 模式需要 --machine-url、--machine-id、--machine-token${plain}"
+            exit 1
+        fi
+        if ! [[ "$MACHINE_ID_ARG" =~ ^[0-9]+$ ]] || [[ "$MACHINE_ID_ARG" -le 0 ]]; then
+            echo -e "${red}--machine-id 必须是正整数${plain}"
+            exit 1
+        fi
+    fi
 }
 
 arch=$(uname -m)
@@ -264,6 +298,68 @@ EOF
         fi
 }
 
+yaml_escape() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    printf '%s' "$value"
+}
+
+generate_v2node_machine_config() {
+        local machine_url="$1"
+        local machine_id="$2"
+        local machine_token="$3"
+        local machine_name="$4"
+
+        if [[ -z "$machine_name" ]]; then
+            machine_name="machine-${machine_id}"
+        fi
+
+        mkdir -p /etc/v2node >/dev/null 2>&1
+        backup_existing_configs
+        cat > /etc/v2node/config.yml <<EOF
+machine:
+  enabled: true
+  continue_on_error: true
+  profiles:
+    - name: "$(yaml_escape "$machine_name")"
+      url: "$(yaml_escape "$machine_url")"
+      token: "$(yaml_escape "$machine_token")"
+      machine_id: ${machine_id}
+      timeout: 15
+
+kernel:
+  config_dir: "/etc/v2node"
+  log_level: "warning"
+
+log:
+  level: "warning"
+  output: ""
+  access: "none"
+
+runtime:
+  gomemlimit: ""
+  gogc: 0
+
+health_port: 0
+pprof_port: 0
+EOF
+        echo -e "${green}V2node machine 配置文件生成完成,正在重新启动服务${plain}"
+        if [[ x"${release}" == x"alpine" ]]; then
+            service v2node restart
+        else
+            systemctl restart v2node
+        fi
+        sleep 2
+        check_status
+        echo -e ""
+        if [[ $? == 0 ]]; then
+            echo -e "${green}v2node 重启成功${plain}"
+        else
+            echo -e "${red}v2node 可能启动失败，请使用 v2node log 查看日志信息${plain}"
+        fi
+}
+
 backup_existing_configs() {
     local now
     now=$(date +%Y%m%d%H%M%S)
@@ -392,7 +488,11 @@ EOF
         echo -e "${green}v2node ${last_version}${plain} 安装完成，已设置开机自启"
     fi
 
-    if [[ ! -f /etc/v2node/config.json && ! -f /etc/v2node/config.yml && ! -f /etc/v2node/config.yaml ]]; then
+    if has_machine_args; then
+        generate_v2node_machine_config "$MACHINE_URL_ARG" "$MACHINE_ID_ARG" "$MACHINE_TOKEN_ARG" "$MACHINE_NAME_ARG"
+        echo -e "${green}已根据 machine 参数生成 /etc/v2node/config.yml${plain}"
+        first_install=false
+    elif [[ ! -f /etc/v2node/config.json && ! -f /etc/v2node/config.yml && ! -f /etc/v2node/config.yaml ]]; then
         # 如果通过 CLI 传入了完整参数，则直接生成配置并跳过交互
         if [[ -n "$API_HOST_ARG" && -n "$NODE_ID_ARG" && -n "$API_KEY_ARG" ]]; then
             generate_v2node_config "$API_HOST_ARG" "$NODE_ID_ARG" "$API_KEY_ARG"
@@ -464,6 +564,7 @@ EOF
 }
 
 parse_args "$@"
+validate_args
 echo -e "${green}开始安装${plain}"
 install_base
 install_v2node "$VERSION_ARG"

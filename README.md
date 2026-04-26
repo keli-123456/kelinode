@@ -16,6 +16,12 @@ A v2board backend base on moddified xray-core.
 wget -N https://raw.githubusercontent.com/keli-123456/kelinode/main/script/install.sh && bash install.sh
 ```
 
+Machine 模式可直接传入服务器机器参数生成 `/etc/v2node/config.yml`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/keli-123456/kelinode/main/script/install.sh -o /tmp/v2node-install.sh && bash /tmp/v2node-install.sh --machine-url https://panel.example.com --machine-id 1 --machine-token your-machine-token --machine-name node-box-1
+```
+
 安装脚本和 `v2node generate` 现在默认生成 `/etc/v2node/config.yml`，并在覆盖旧配置前自动备份已有的 `config.json` / `config.yml` / `config.yaml`。
 
 ### Docker 部署
