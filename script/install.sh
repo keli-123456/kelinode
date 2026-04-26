@@ -6,6 +6,11 @@ yellow='\033[0;33m'
 plain='\033[0m'
 
 cur_dir=$(pwd)
+V2NODE_INSTALL_DIR="/usr/local/v2node"
+V2NODE_CONFIG_DIR="/etc/v2node"
+V2NODE_CONFIG_FILE="${V2NODE_CONFIG_DIR}/config.yml"
+V2NODE_VERSION_FILE="${V2NODE_INSTALL_DIR}/.installed_version"
+INSTALL_LOCK_DIR="/tmp/v2node-install.lock"
 
 # check root
 [[ $EUID -ne 0 ]] && echo -e "${red}错误：${plain} 必须使用root用户运行此脚本！\n" && exit 1
@@ -98,6 +103,23 @@ validate_args() {
             exit 1
         fi
     fi
+}
+
+acquire_install_lock() {
+    local waited=0
+    local max_wait=120
+
+    while ! mkdir "$INSTALL_LOCK_DIR" 2>/dev/null; do
+        if [[ $waited -ge $max_wait ]]; then
+            echo -e "${red}另一个 v2node 安装任务仍在运行，请稍后重试${plain}"
+            exit 1
+        fi
+        echo -e "${yellow}检测到另一个 v2node 安装任务，等待中... (${waited}/${max_wait}秒)${plain}"
+        sleep 2
+        waited=$((waited + 2))
+    done
+
+    trap 'rmdir "$INSTALL_LOCK_DIR" 2>/dev/null || true' EXIT
 }
 
 arch=$(uname -m)
@@ -305,28 +327,178 @@ yaml_escape() {
     printf '%s' "$value"
 }
 
-generate_v2node_machine_config() {
-        local machine_url="$1"
-        local machine_id="$2"
-        local machine_token="$3"
-        local machine_name="$4"
+trim_value() {
+    local value="$1"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "$value"
+}
 
-        if [[ -z "$machine_name" ]]; then
-            machine_name="machine-${machine_id}"
+yaml_unquote() {
+    local value
+    value=$(trim_value "$1")
+    if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+        value="${value#\"}"
+        value="${value%\"}"
+        value="${value//\\\"/\"}"
+        value="${value//\\\\/\\}"
+    fi
+    printf '%s' "$value"
+}
+
+normalize_machine_url() {
+    local value
+    value=$(trim_value "$1")
+    while [[ "$value" == */ ]]; do
+        value="${value%/}"
+    done
+    printf '%s' "$value"
+}
+
+restart_v2node_service() {
+    if [[ x"${release}" == x"alpine" ]]; then
+        service v2node restart
+    else
+        systemctl restart v2node
+    fi
+    sleep 2
+    check_status
+    echo -e ""
+    if [[ $? == 0 ]]; then
+        echo -e "${green}v2node 重启成功${plain}"
+    else
+        echo -e "${red}v2node 可能启动失败，请使用 v2node log 查看日志信息${plain}"
+    fi
+}
+
+start_v2node_service() {
+    if [[ x"${release}" == x"alpine" ]]; then
+        service v2node start
+    else
+        systemctl start v2node
+    fi
+    sleep 2
+    check_status
+    echo -e ""
+    if [[ $? == 0 ]]; then
+        echo -e "${green}v2node 启动成功${plain}"
+    else
+        echo -e "${red}v2node 可能启动失败，请使用 v2node log 查看日志信息${plain}"
+    fi
+}
+
+stop_v2node_service() {
+    if [[ x"${release}" == x"alpine" ]]; then
+        service v2node stop >/dev/null 2>&1 || true
+    else
+        systemctl stop v2node >/dev/null 2>&1 || true
+    fi
+}
+
+extract_machine_profiles() {
+    local config_file="$1"
+    local line value in_profiles=false in_profile=false
+    local name="" url="" token="" machine_id="" timeout="" config_dir=""
+
+    flush_profile() {
+        if [[ -n "$url" && -n "$machine_id" ]]; then
+            [[ -z "$timeout" ]] && timeout=15
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$url" "$token" "$machine_id" "$timeout" "$config_dir"
+        fi
+        in_profile=false
+        name=""
+        url=""
+        token=""
+        machine_id=""
+        timeout=""
+        config_dir=""
+    }
+
+    [[ -f "$config_file" ]] || return 0
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ ^[[:space:]]*profiles:[[:space:]]*$ ]]; then
+            in_profiles=true
+            continue
         fi
 
-        mkdir -p /etc/v2node >/dev/null 2>&1
-        backup_existing_configs
-        cat > /etc/v2node/config.yml <<EOF
+        if [[ "$in_profiles" != true ]]; then
+            continue
+        fi
+
+        if [[ "$line" =~ ^[[:alnum:]_]+: ]]; then
+            flush_profile
+            in_profiles=false
+            continue
+        fi
+
+        if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*name:[[:space:]]*(.*)$ ]]; then
+            flush_profile
+            in_profile=true
+            name=$(yaml_unquote "${BASH_REMATCH[1]}")
+            continue
+        fi
+        if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*url:[[:space:]]*(.*)$ ]]; then
+            flush_profile
+            in_profile=true
+            url=$(normalize_machine_url "$(yaml_unquote "${BASH_REMATCH[1]}")")
+            continue
+        fi
+        if [[ "$in_profile" == true && "$line" =~ ^[[:space:]]*url:[[:space:]]*(.*)$ ]]; then
+            url=$(normalize_machine_url "$(yaml_unquote "${BASH_REMATCH[1]}")")
+            continue
+        fi
+        if [[ "$in_profile" == true && "$line" =~ ^[[:space:]]*token:[[:space:]]*(.*)$ ]]; then
+            token=$(yaml_unquote "${BASH_REMATCH[1]}")
+            continue
+        fi
+        if [[ "$in_profile" == true && "$line" =~ ^[[:space:]]*machine_id:[[:space:]]*([0-9]+) ]]; then
+            machine_id="${BASH_REMATCH[1]}"
+            continue
+        fi
+        if [[ "$in_profile" == true && "$line" =~ ^[[:space:]]*timeout:[[:space:]]*([0-9]+) ]]; then
+            timeout="${BASH_REMATCH[1]}"
+            continue
+        fi
+        if [[ "$in_profile" == true && "$line" =~ ^[[:space:]]*config_dir:[[:space:]]*(.*)$ ]]; then
+            config_dir=$(yaml_unquote "${BASH_REMATCH[1]}")
+            continue
+        fi
+    done < "$config_file"
+
+    flush_profile
+}
+
+write_machine_config_from_profiles() {
+    local profiles_file="$1"
+    local name url token machine_id timeout config_dir
+
+    cat <<EOF
 machine:
   enabled: true
   continue_on_error: true
   profiles:
-    - name: "$(yaml_escape "$machine_name")"
-      url: "$(yaml_escape "$machine_url")"
-      token: "$(yaml_escape "$machine_token")"
+EOF
+
+    while IFS=$'\t' read -r name url token machine_id timeout config_dir; do
+        [[ -z "$url" || -z "$machine_id" ]] && continue
+        [[ -z "$name" ]] && name="machine-${machine_id}"
+        [[ -z "$timeout" ]] && timeout=15
+        cat <<EOF
+    - name: "$(yaml_escape "$name")"
+      url: "$(yaml_escape "$url")"
+      token: "$(yaml_escape "$token")"
       machine_id: ${machine_id}
-      timeout: 15
+      timeout: ${timeout}
+EOF
+        if [[ -n "$config_dir" ]]; then
+            cat <<EOF
+      config_dir: "$(yaml_escape "$config_dir")"
+EOF
+        fi
+    done < "$profiles_file"
+
+    cat <<EOF
 
 kernel:
   config_dir: "/etc/v2node"
@@ -344,20 +516,63 @@ runtime:
 health_port: 0
 pprof_port: 0
 EOF
-        echo -e "${green}V2node machine 配置文件生成完成,正在重新启动服务${plain}"
-        if [[ x"${release}" == x"alpine" ]]; then
-            service v2node restart
-        else
-            systemctl restart v2node
-        fi
-        sleep 2
-        check_status
-        echo -e ""
-        if [[ $? == 0 ]]; then
-            echo -e "${green}v2node 重启成功${plain}"
-        else
-            echo -e "${red}v2node 可能启动失败，请使用 v2node log 查看日志信息${plain}"
-        fi
+}
+
+generate_v2node_machine_config() {
+    local machine_url="$1"
+    local machine_id="$2"
+    local machine_token="$3"
+    local machine_name="$4"
+    local existing_profiles merged_profiles new_config profile_count
+
+    machine_url=$(normalize_machine_url "$machine_url")
+    if [[ -z "$machine_name" ]]; then
+        machine_name="machine-${machine_id}"
+    fi
+
+    mkdir -p "$V2NODE_CONFIG_DIR" >/dev/null 2>&1
+    existing_profiles=$(mktemp)
+    merged_profiles=$(mktemp)
+    new_config=$(mktemp)
+
+    extract_machine_profiles "$V2NODE_CONFIG_FILE" > "$existing_profiles"
+    awk -F '\t' \
+        -v name="$machine_name" \
+        -v url="$machine_url" \
+        -v token="$machine_token" \
+        -v machine_id="$machine_id" \
+        'BEGIN { updated = 0 }
+         {
+             if ($2 == url && $4 == machine_id) {
+                 if (!updated) {
+                     print name "\t" url "\t" token "\t" machine_id "\t15\t"
+                     updated = 1
+                 }
+                 next
+             }
+             print $0
+         }
+         END {
+             if (!updated) {
+                 print name "\t" url "\t" token "\t" machine_id "\t15\t"
+             }
+         }' "$existing_profiles" > "$merged_profiles"
+
+    write_machine_config_from_profiles "$merged_profiles" > "$new_config"
+    if [[ -f "$V2NODE_CONFIG_FILE" ]] && cmp -s "$new_config" "$V2NODE_CONFIG_FILE"; then
+        rm -f "$existing_profiles" "$merged_profiles" "$new_config"
+        echo -e "${green}V2node machine 配置未变化，保持现有 profiles${plain}"
+        restart_v2node_service
+        return
+    fi
+
+    backup_existing_configs
+    mv -f "$new_config" "$V2NODE_CONFIG_FILE"
+    rm -f "$existing_profiles" "$merged_profiles"
+    profile_count=$(extract_machine_profiles "$V2NODE_CONFIG_FILE" | wc -l | tr -d ' ')
+    echo -e "${green}V2node machine 配置已合并，当前 profiles 数量: ${profile_count}${plain}"
+    echo -e "${green}同一台 VPS 多个 Xboardpro 仍由一个 v2node 进程承载${plain}"
+    restart_v2node_service
 }
 
 backup_existing_configs() {
@@ -372,8 +587,8 @@ backup_existing_configs() {
 }
 
 write_default_v2node_config() {
-    mkdir -p /etc/v2node >/dev/null 2>&1
-    cat > /etc/v2node/config.yml <<'EOF'
+    mkdir -p "$V2NODE_CONFIG_DIR" >/dev/null 2>&1
+    cat > "$V2NODE_CONFIG_FILE" <<'EOF'
 panel:
   url: "https://example.com/"
   token: "your-node-token"
@@ -398,44 +613,48 @@ pprof_port: 0
 EOF
 }
 
-install_v2node() {
+resolve_v2node_version() {
     local version_param="$1"
-    if [[ -e /usr/local/v2node/ ]]; then
-        rm -rf /usr/local/v2node/
-    fi
 
-    mkdir /usr/local/v2node/ -p
-    cd /usr/local/v2node/
-
-    if  [[ -z "$version_param" ]] ; then
+    if [[ -z "$version_param" ]] ; then
         last_version=$(curl -Ls "https://api.github.com/repos/keli-123456/kelinode/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
         if [[ ! -n "$last_version" ]]; then
             echo -e "${red}检测 v2node 版本失败，可能是超出 Github API 限制，请稍后再试，或手动指定 v2node 版本安装${plain}"
             exit 1
         fi
-        echo -e "${green}检测到最新版本：${last_version}，开始安装...${plain}"
-        url="https://github.com/keli-123456/kelinode/releases/download/${last_version}/v2node-linux-${arch}.zip"
-        curl -sL "$url" | pv -s 30M -W -N "下载进度" > /usr/local/v2node/v2node-linux.zip
-        if [[ $? -ne 0 ]]; then
-            echo -e "${red}下载 v2node 失败，请确保你的服务器能够下载 Github 的文件${plain}"
-            exit 1
-        fi
     else
-    last_version=$version_param
-        url="https://github.com/keli-123456/kelinode/releases/download/${last_version}/v2node-linux-${arch}.zip"
-        curl -sL "$url" | pv -s 30M -W -N "下载进度" > /usr/local/v2node/v2node-linux.zip
-        if [[ $? -ne 0 ]]; then
-            echo -e "${red}下载 v2node $1 失败，请确保此版本存在${plain}"
-            exit 1
-        fi
+        last_version=$version_param
     fi
 
-    unzip v2node-linux.zip
-    rm v2node-linux.zip -f
-    chmod +x v2node
-    mkdir /etc/v2node/ -p
-    cp geoip.dat /etc/v2node/
-    cp geosite.dat /etc/v2node/
+    url="https://github.com/keli-123456/kelinode/releases/download/${last_version}/v2node-linux-${arch}.zip"
+}
+
+installed_v2node_version() {
+    local installed=""
+
+    if [[ -f "$V2NODE_VERSION_FILE" ]]; then
+        read -r installed < "$V2NODE_VERSION_FILE" || true
+    fi
+    if [[ -z "$installed" && -x "${V2NODE_INSTALL_DIR}/v2node" ]]; then
+        installed=$("${V2NODE_INSTALL_DIR}/v2node" version 2>/dev/null | awk '{print $2}' | head -n 1)
+    fi
+
+    printf '%s' "$installed"
+}
+
+is_v2node_installed_version() {
+    local expected="$1"
+    local installed
+
+    [[ -x "${V2NODE_INSTALL_DIR}/v2node" ]] || return 1
+    [[ -f "${V2NODE_INSTALL_DIR}/geoip.dat" ]] || return 1
+    [[ -f "${V2NODE_INSTALL_DIR}/geosite.dat" ]] || return 1
+
+    installed=$(installed_v2node_version)
+    [[ "$installed" == "$expected" ]]
+}
+
+install_v2node_service() {
     if [[ x"${release}" == x"alpine" ]]; then
         rm /etc/init.d/v2node -f
         cat <<EOF > /etc/init.d/v2node
@@ -444,7 +663,7 @@ install_v2node() {
 name="v2node"
 description="v2node"
 
-command="/usr/local/v2node/v2node"
+command="${V2NODE_INSTALL_DIR}/v2node"
 command_args="server"
 command_user="root"
 
@@ -457,7 +676,6 @@ depend() {
 EOF
         chmod +x /etc/init.d/v2node
         rc-update add v2node default
-        echo -e "${green}v2node ${last_version}${plain} 安装完成，已设置开机自启"
     else
         rm /etc/systemd/system/v2node.service -f
         cat <<EOF > /etc/systemd/system/v2node.service
@@ -474,8 +692,8 @@ LimitAS=infinity
 LimitRSS=infinity
 LimitCORE=infinity
 LimitNOFILE=999999
-WorkingDirectory=/usr/local/v2node/
-ExecStart=/usr/local/v2node/v2node server
+WorkingDirectory=${V2NODE_INSTALL_DIR}/
+ExecStart=${V2NODE_INSTALL_DIR}/v2node server
 Restart=always
 RestartSec=10
 
@@ -483,16 +701,49 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
         systemctl daemon-reload
-        systemctl stop v2node
         systemctl enable v2node
-        echo -e "${green}v2node ${last_version}${plain} 安装完成，已设置开机自启"
     fi
+}
+
+download_and_install_v2node_binary() {
+    stop_v2node_service
+    rm -rf "$V2NODE_INSTALL_DIR"
+    mkdir -p "$V2NODE_INSTALL_DIR"
+    cd "$V2NODE_INSTALL_DIR" || exit 1
+
+    echo -e "${green}检测到需要安装 v2node ${last_version}，开始下载...${plain}"
+    if ! curl -fL "$url" -o "${V2NODE_INSTALL_DIR}/v2node-linux.zip"; then
+        echo -e "${red}下载 v2node ${last_version} 失败，请确认版本存在且服务器可以访问 Github Release${plain}"
+        exit 1
+    fi
+
+    unzip -o v2node-linux.zip
+    rm v2node-linux.zip -f
+    chmod +x v2node
+    mkdir -p "$V2NODE_CONFIG_DIR"
+    cp geoip.dat "$V2NODE_CONFIG_DIR/"
+    cp geosite.dat "$V2NODE_CONFIG_DIR/"
+    printf '%s\n' "$last_version" > "$V2NODE_VERSION_FILE"
+    echo -e "${green}v2node ${last_version}${plain} 安装完成"
+}
+
+install_v2node() {
+    local version_param="$1"
+    resolve_v2node_version "$version_param"
+
+    if is_v2node_installed_version "$last_version"; then
+        echo -e "${green}已安装 v2node ${last_version}，跳过二进制下载${plain}"
+    else
+        download_and_install_v2node_binary
+    fi
+    install_v2node_service
+    echo -e "${green}v2node ${last_version}${plain} 已设置开机自启"
 
     if has_machine_args; then
         generate_v2node_machine_config "$MACHINE_URL_ARG" "$MACHINE_ID_ARG" "$MACHINE_TOKEN_ARG" "$MACHINE_NAME_ARG"
         echo -e "${green}已根据 machine 参数生成 /etc/v2node/config.yml${plain}"
         first_install=false
-    elif [[ ! -f /etc/v2node/config.json && ! -f /etc/v2node/config.yml && ! -f /etc/v2node/config.yaml ]]; then
+    elif [[ ! -f /etc/v2node/config.json && ! -f "$V2NODE_CONFIG_FILE" && ! -f /etc/v2node/config.yaml ]]; then
         # 如果通过 CLI 传入了完整参数，则直接生成配置并跳过交互
         if [[ -n "$API_HOST_ARG" && -n "$NODE_ID_ARG" && -n "$API_KEY_ARG" ]]; then
             generate_v2node_config "$API_HOST_ARG" "$NODE_ID_ARG" "$API_KEY_ARG"
@@ -503,19 +754,7 @@ EOF
             first_install=true
         fi
     else
-        if [[ x"${release}" == x"alpine" ]]; then
-            service v2node start
-        else
-            systemctl start v2node
-        fi
-        sleep 2
-        check_status
-        echo -e ""
-        if [[ $? == 0 ]]; then
-            echo -e "${green}v2node 重启成功${plain}"
-        else
-            echo -e "${red}v2node 可能启动失败，请使用 v2node log 查看日志信息${plain}"
-        fi
+        start_v2node_service
         first_install=false
     fi
 
@@ -566,5 +805,6 @@ EOF
 parse_args "$@"
 validate_args
 echo -e "${green}开始安装${plain}"
+acquire_install_lock
 install_base
 install_v2node "$VERSION_ARG"

@@ -22,6 +22,8 @@ Machine 模式可直接传入服务器机器参数生成 `/etc/v2node/config.yml
 curl -fsSL https://raw.githubusercontent.com/keli-123456/kelinode/main/script/install.sh -o /tmp/v2node-install.sh && bash /tmp/v2node-install.sh --machine-url https://panel.example.com --machine-id 1 --machine-token your-machine-token --machine-name node-box-1
 ```
 
+同一台 VPS 可以依次执行多个 Xboardpro 的 machine 安装命令；脚本会按 `url + machine_id` 合并 `/etc/v2node/config.yml` 的 `machine.profiles`，重复执行同一网站会更新 token，不会启动多个 v2node 进程。
+
 安装脚本和 `v2node generate` 现在默认生成 `/etc/v2node/config.yml`，并在覆盖旧配置前自动备份已有的 `config.json` / `config.yml` / `config.yaml`。
 
 ### Docker 部署
