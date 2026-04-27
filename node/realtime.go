@@ -30,7 +30,10 @@ var dialRealtimeWS = func(ctx context.Context, rawURL string) (realtimeWSConn, e
 	return conn, nil
 }
 
-const realtimeReasonSubscriptionProxyCertStateChanged = "subscription_proxy.cert_state_changed"
+const (
+	realtimeReasonSubscriptionProxyCertStateChanged = "subscription_proxy.cert_state_changed"
+	realtimeReasonServerMachineBound                = "admin.server_machine.bound"
+)
 
 type realtimeMessage struct {
 	Type      string                  `json:"type"`
@@ -393,7 +396,12 @@ func (c *Controller) runRealtimeConfigWorker(ctx context.Context) {
 }
 
 func shouldForceRealtimeConfigReload(message realtimeMessage) bool {
-	return message.Reason == realtimeReasonSubscriptionProxyCertStateChanged
+	switch message.Reason {
+	case realtimeReasonSubscriptionProxyCertStateChanged, realtimeReasonServerMachineBound:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Controller) enqueueRealtimeReload() error {

@@ -92,6 +92,39 @@ func TestRunRealtimeConfigWorkerForcesReloadForSubscriptionProxyCertChange(t *te
 	}
 }
 
+func TestRunRealtimeConfigWorkerForcesReloadForServerMachineBindingChange(t *testing.T) {
+	t.Parallel()
+
+	controller := newTestRealtimeController()
+	reloadCh := make(chan struct{}, 1)
+	controller.server = &core.V2Core{ReloadCh: reloadCh}
+	controller.executeConfigCheckFn = func(context.Context) (bool, error) {
+		t.Fatalf("server machine binding change should force reload without node config check")
+		return false, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go controller.runRealtimeConfigWorker(ctx)
+
+	controller.enqueueRealtimeConfigCheck(realtimeMessage{
+		EventID: "evt-machine-bound",
+		Topic:   "config",
+		Reason:  realtimeReasonServerMachineBound,
+	})
+
+	receipts := collectRealtimeMessages(t, controller.realtimeClient.sendCh, 3)
+	assertReceiptSequence(t, receipts, "config", "evt-machine-bound", []string{"received", "applying", "applied"})
+	if got, want := receipts[2].Message, "reload queued"; got != want {
+		t.Fatalf("unexpected applied message: got %q want %q", got, want)
+	}
+	select {
+	case <-reloadCh:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("expected reload signal")
+	}
+}
+
 func TestRunRealtimeConfigWorkerFailed(t *testing.T) {
 	t.Parallel()
 
