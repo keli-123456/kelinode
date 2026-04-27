@@ -29,7 +29,7 @@ func newMachineStatusReporterState() *machineStatusReporterState {
 	return &machineStatusReporterState{}
 }
 
-func (s *machineStatusReporterState) Apply(machine conf.MachineConfig, agentStatus func() subproxy.Status) {
+func (s *machineStatusReporterState) Apply(machine conf.MachineConfig, agentStatus func() subproxy.Status, requestReload func()) {
 	if s == nil {
 		return
 	}
@@ -53,7 +53,7 @@ func (s *machineStatusReporterState) Apply(machine conf.MachineConfig, agentStat
 	s.fingerprint = nextFingerprint
 	s.mu.Unlock()
 
-	go runMachineStatusReporter(ctx, profiles, agentStatus)
+	go runMachineStatusReporter(ctx, profiles, agentStatus, requestReload)
 }
 
 func (s *machineStatusReporterState) Close() {
@@ -70,17 +70,26 @@ func (s *machineStatusReporterState) Close() {
 	}
 }
 
-func runMachineStatusReporter(ctx context.Context, profiles []conf.MachineProfileConfig, agentStatus func() subproxy.Status) {
+func runMachineStatusReporter(ctx context.Context, profiles []conf.MachineProfileConfig, agentStatus func() subproxy.Status, requestReload func()) {
 	systemSampler := newMachineSystemSampler()
 	report := func() {
 		systemStatus := systemSampler.Snapshot()
 		for _, profile := range profiles {
-			if err := reportMachineStatus(ctx, profile, agentStatus, systemStatus); err != nil {
+			result, err := reportMachineStatus(ctx, profile, agentStatus, systemStatus)
+			if err != nil {
 				log.WithFields(log.Fields{
 					"profile":    profile.Name,
 					"machine_id": profile.MachineID,
 					"err":        err,
 				}).Debug("Machine status report failed")
+				continue
+			}
+			if result.Reload && requestReload != nil {
+				log.WithFields(log.Fields{
+					"profile":    profile.Name,
+					"machine_id": profile.MachineID,
+				}).Info("Machine status requested config reload")
+				requestReload()
 			}
 		}
 	}
@@ -98,11 +107,15 @@ func runMachineStatusReporter(ctx context.Context, profiles []conf.MachineProfil
 	}
 }
 
-func reportMachineStatus(ctx context.Context, profile conf.MachineProfileConfig, agentStatus func() subproxy.Status, systemStatus map[string]any) error {
+type machineStatusReportResult struct {
+	Reload bool
+}
+
+func reportMachineStatus(ctx context.Context, profile conf.MachineProfileConfig, agentStatus func() subproxy.Status, systemStatus map[string]any) (machineStatusReportResult, error) {
 	apiHost := strings.TrimRight(strings.TrimSpace(profile.APIHost), "/")
 	token := strings.TrimSpace(profile.Key)
 	if apiHost == "" || token == "" || profile.MachineID <= 0 {
-		return nil
+		return machineStatusReportResult{}, nil
 	}
 	status := buildMachineStatusPayload(systemStatus)
 	status["version"] = version
@@ -117,7 +130,7 @@ func reportMachineStatus(ctx context.Context, profile conf.MachineProfileConfig,
 		"status":     status,
 	})
 	if err != nil {
-		return err
+		return machineStatusReportResult{}, err
 	}
 
 	timeout := 30 * time.Second
@@ -128,21 +141,35 @@ func reportMachineStatus(ctx context.Context, profile conf.MachineProfileConfig,
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, apiHost+panel.PathV2MachineStatus, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return machineStatusReportResult{}, err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return machineStatusReportResult{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= http.StatusBadRequest {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return fmt.Errorf("status=%d body=%s", resp.StatusCode, string(data))
+		return machineStatusReportResult{}, fmt.Errorf("status=%d body=%s", resp.StatusCode, string(data))
 	}
-	return nil
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return machineStatusReportResult{}, err
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return machineStatusReportResult{}, nil
+	}
+	var payload struct {
+		Reload bool `json:"reload"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return machineStatusReportResult{}, fmt.Errorf("decode machine status response failed: %w", err)
+	}
+	return machineStatusReportResult{Reload: payload.Reload}, nil
 }
 
 func buildMachineStatusPayload(systemStatus map[string]any) map[string]any {

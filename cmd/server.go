@@ -67,8 +67,8 @@ var (
 		return subscriptionProxyManager.Close()
 	}
 	machineStatusReporter       = newMachineStatusReporterState()
-	applyMachineStatusForReload = func(machine conf.MachineConfig) {
-		machineStatusReporter.Apply(machine, subscriptionProxyManager.Status)
+	applyMachineStatusForReload = func(machine conf.MachineConfig, requestReload func()) {
+		machineStatusReporter.Apply(machine, subscriptionProxyManager.Status, requestReload)
 	}
 	closeMachineStatusForReload = func() { machineStatusReporter.Close() }
 )
@@ -123,12 +123,14 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		}
 		log.SetOutput(f)
 	}
+	reloadCh := make(chan struct{}, 1)
+	requestReload := func() { queueReload(reloadCh) }
 	if err := prepareNodeConfigsForReload(context.Background(), c); err != nil {
 		log.WithField("err", err).Error("Resolve machine profiles failed")
 		return
 	}
 	applySubscriptionProxy(c.AgentConfig.SubscriptionProxy)
-	applyMachineStatusForReload(c.MachineConfig)
+	applyMachineStatusForReload(c.MachineConfig, requestReload)
 	defer func() {
 		closeMachineStatusForReload()
 		if err := closeSubscriptionProxyForReload(); err != nil {
@@ -162,7 +164,6 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		log.Info("Got nodes info from server")
 	}
 	//core
-	var reloadCh = make(chan struct{}, 1)
 	v2core := core.New(c)
 	v2core.ReloadCh = reloadCh
 	err = v2core.Start(nodes.NodeInfos)
@@ -195,10 +196,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	if watch {
 		// On file change, just signal reload; do not run reload concurrently here
 		err = c.Watch(configPath, func() {
-			select {
-			case reloadCh <- struct{}{}:
-			default: // drop if a reload is already queued
-			}
+			queueReload(reloadCh)
 		})
 		if err != nil {
 			log.WithField("err", err).Error("start watch failed")
@@ -266,7 +264,7 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core, health *heal
 		return err
 	}
 	applySubscriptionProxy(newConf.AgentConfig.SubscriptionProxy)
-	applyMachineStatusForReload(newConf.MachineConfig)
+	applyMachineStatusForReload(newConf.MachineConfig, func() { queueReload(oldReloadCh) })
 	appliedRuntime := applyRuntimeSettings(newConf.RuntimeConfig, runtimeState)
 
 	if newConf.MachineConfig.Enabled && *nodes != nil && *v2core != nil {
@@ -329,6 +327,16 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core, health *heal
 func applySubscriptionProxy(cfg conf.SubscriptionProxyConfig) {
 	if err := applySubscriptionProxyForReload(cfg); err != nil {
 		log.WithField("err", err).Warn("Subscription proxy apply failed")
+	}
+}
+
+func queueReload(reloadCh chan struct{}) {
+	if reloadCh == nil {
+		return
+	}
+	select {
+	case reloadCh <- struct{}{}:
+	default:
 	}
 }
 
