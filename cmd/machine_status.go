@@ -71,9 +71,11 @@ func (s *machineStatusReporterState) Close() {
 }
 
 func runMachineStatusReporter(ctx context.Context, profiles []conf.MachineProfileConfig, agentStatus func() subproxy.Status) {
+	systemSampler := newMachineSystemSampler()
 	report := func() {
+		systemStatus := systemSampler.Snapshot()
 		for _, profile := range profiles {
-			if err := reportMachineStatus(ctx, profile, agentStatus); err != nil {
+			if err := reportMachineStatus(ctx, profile, agentStatus, systemStatus); err != nil {
 				log.WithFields(log.Fields{
 					"profile":    profile.Name,
 					"machine_id": profile.MachineID,
@@ -96,15 +98,14 @@ func runMachineStatusReporter(ctx context.Context, profiles []conf.MachineProfil
 	}
 }
 
-func reportMachineStatus(ctx context.Context, profile conf.MachineProfileConfig, agentStatus func() subproxy.Status) error {
+func reportMachineStatus(ctx context.Context, profile conf.MachineProfileConfig, agentStatus func() subproxy.Status, systemStatus map[string]any) error {
 	apiHost := strings.TrimRight(strings.TrimSpace(profile.APIHost), "/")
 	token := strings.TrimSpace(profile.Key)
 	if apiHost == "" || token == "" || profile.MachineID <= 0 {
 		return nil
 	}
-	status := map[string]any{
-		"version": version,
-	}
+	status := buildMachineStatusPayload(systemStatus)
+	status["version"] = version
 	if agentStatus != nil {
 		status["agent"] = map[string]any{
 			"subscription_proxy": agentStatus(),
@@ -142,6 +143,14 @@ func reportMachineStatus(ctx context.Context, profile conf.MachineProfileConfig,
 		return fmt.Errorf("status=%d body=%s", resp.StatusCode, string(data))
 	}
 	return nil
+}
+
+func buildMachineStatusPayload(systemStatus map[string]any) map[string]any {
+	status := map[string]any{}
+	for key, value := range systemStatus {
+		status[key] = value
+	}
+	return status
 }
 
 func normalizeStatusProfiles(profiles []conf.MachineProfileConfig) []conf.MachineProfileConfig {
