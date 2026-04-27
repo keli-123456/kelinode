@@ -1,6 +1,7 @@
 package subproxy
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -53,6 +54,77 @@ func TestProxySubscriptionForwardsToProfileSubscribePath(t *testing.T) {
 	}
 	if got := rec.Header().Get("Subscription-Userinfo"); got != "upload=0; download=1" {
 		t.Fatalf("missing response header: %s", got)
+	}
+}
+
+func TestNormalizeConfigUsesDetectedIPv4ForIPv6CertificateDomain(t *testing.T) {
+	oldDetect := detectPublicIPv4Address
+	detectPublicIPv4Address = func(context.Context) (string, error) {
+		return "203.0.113.10", nil
+	}
+	defer func() {
+		detectPublicIPv4Address = oldDetect
+	}()
+
+	cfg, err := normalizeConfig(conf.SubscriptionProxyConfig{
+		Enabled:           true,
+		CertificateDomain: "2400:8901::2000:49ff:fe93:6d50",
+		SiteID:            "site-a",
+		UpstreamBaseURL:   "https://panel.example.com",
+	})
+	if err != nil {
+		t.Fatalf("normalize config failed: %v", err)
+	}
+	if cfg.CertificateDomain != "203.0.113.10" {
+		t.Fatalf("unexpected certificate domain: %s", cfg.CertificateDomain)
+	}
+}
+
+func TestNormalizeConfigKeepsConfiguredIPv4CertificateDomain(t *testing.T) {
+	oldDetect := detectPublicIPv4Address
+	detectPublicIPv4Address = func(context.Context) (string, error) {
+		t.Fatal("public IPv4 detection should not be called for configured IPv4")
+		return "", nil
+	}
+	defer func() {
+		detectPublicIPv4Address = oldDetect
+	}()
+
+	cfg, err := normalizeConfig(conf.SubscriptionProxyConfig{
+		Enabled:           true,
+		CertificateDomain: "152.53.135.140",
+		SiteID:            "site-a",
+		UpstreamBaseURL:   "https://panel.example.com",
+	})
+	if err != nil {
+		t.Fatalf("normalize config failed: %v", err)
+	}
+	if cfg.CertificateDomain != "152.53.135.140" {
+		t.Fatalf("unexpected certificate domain: %s", cfg.CertificateDomain)
+	}
+}
+
+func TestNormalizeConfigKeepsConfiguredHostnameCertificateDomain(t *testing.T) {
+	oldDetect := detectPublicIPv4Address
+	detectPublicIPv4Address = func(context.Context) (string, error) {
+		t.Fatal("public IPv4 detection should not be called for configured hostname")
+		return "", nil
+	}
+	defer func() {
+		detectPublicIPv4Address = oldDetect
+	}()
+
+	cfg, err := normalizeConfig(conf.SubscriptionProxyConfig{
+		Enabled:           true,
+		CertificateDomain: "sub.example.com",
+		SiteID:            "site-a",
+		UpstreamBaseURL:   "https://panel.example.com",
+	})
+	if err != nil {
+		t.Fatalf("normalize config failed: %v", err)
+	}
+	if cfg.CertificateDomain != "sub.example.com" {
+		t.Fatalf("unexpected certificate domain: %s", cfg.CertificateDomain)
 	}
 }
 

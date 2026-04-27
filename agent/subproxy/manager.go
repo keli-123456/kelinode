@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -30,6 +31,14 @@ const (
 	defaultMaxResponseBytes = int64(10 * 1024 * 1024)
 	defaultChallengeDir     = "/etc/v2node/subproxy/challenges"
 )
+
+var publicIPv4LookupURLs = []string{
+	"https://api4.ipify.org",
+	"https://ipv4.icanhazip.com",
+	"https://ifconfig.me/ip",
+}
+
+var detectPublicIPv4Address = detectPublicIPv4
 
 type Status struct {
 	Status            string    `json:"status"`
@@ -461,6 +470,16 @@ func normalizeConfig(cfg conf.SubscriptionProxyConfig) (conf.SubscriptionProxyCo
 	cfg.CertFile = strings.TrimSpace(cfg.CertFile)
 	cfg.KeyFile = strings.TrimSpace(cfg.KeyFile)
 	cfg.CertificateDomain = strings.TrimSpace(cfg.CertificateDomain)
+	if cfg.Enabled {
+		resolved, changed := resolveSubscriptionCertificateDomain(cfg.CertificateDomain)
+		if changed {
+			log.WithFields(log.Fields{
+				"from": cfg.CertificateDomain,
+				"to":   resolved,
+			}).Info("Subscription proxy certificate domain resolved to public IPv4")
+			cfg.CertificateDomain = resolved
+		}
+	}
 	cfg.ChallengeDir = strings.TrimSpace(cfg.ChallengeDir)
 	if cfg.ChallengeDir == "" {
 		cfg.ChallengeDir = defaultChallengeDir
@@ -545,6 +564,140 @@ func fingerprint(cfg conf.SubscriptionProxyConfig) string {
 		parts = append(parts, profile.SiteID, profile.UpstreamBaseURL, profile.SubscribePath)
 	}
 	return strings.Join(parts, "\x00")
+}
+
+func resolveSubscriptionCertificateDomain(domain string) (string, bool) {
+	domain = strings.TrimSpace(domain)
+	if domain != "" && !isIPv6Literal(domain) {
+		return domain, false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	ip, err := detectPublicIPv4Address(ctx)
+	if err != nil || ip == "" {
+		if domain != "" {
+			log.WithFields(log.Fields{
+				"domain": domain,
+				"err":    err,
+			}).Warn("Subscription proxy certificate domain is IPv6 and public IPv4 detection failed")
+		}
+		return domain, false
+	}
+	return ip, ip != domain
+}
+
+func detectPublicIPv4(ctx context.Context) (string, error) {
+	if ip := detectPublicIPv4FromInterfaces(); ip != "" {
+		return ip, nil
+	}
+	return detectPublicIPv4FromHTTP(ctx)
+}
+
+func detectPublicIPv4FromInterfaces() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch typed := addr.(type) {
+			case *net.IPNet:
+				ip = typed.IP
+			case *net.IPAddr:
+				ip = typed.IP
+			}
+			if ip == nil {
+				continue
+			}
+			ip4 := ip.To4()
+			if ip4 == nil {
+				continue
+			}
+			value := ip4.String()
+			if isPublicIPv4Literal(value) {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func detectPublicIPv4FromHTTP(ctx context.Context) (string, error) {
+	dialer := &net.Dialer{Timeout: 2 * time.Second}
+	client := &http.Client{
+		Timeout: 4 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: func(ctx context.Context, _, address string) (net.Conn, error) {
+				return dialer.DialContext(ctx, "tcp4", address)
+			},
+			TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+			MaxIdleConns:        4,
+			MaxIdleConnsPerHost: 1,
+			IdleConnTimeout:     10 * time.Second,
+		},
+	}
+
+	var lastErr error
+	for _, rawURL := range publicIPv4LookupURLs {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("Accept", "text/plain")
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 128))
+		_ = resp.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			continue
+		}
+		if resp.StatusCode >= http.StatusBadRequest {
+			lastErr = fmt.Errorf("public IPv4 lookup %s returned status %d", rawURL, resp.StatusCode)
+			continue
+		}
+		ip := strings.TrimSpace(string(body))
+		if isPublicIPv4Literal(ip) {
+			return ip, nil
+		}
+		lastErr = fmt.Errorf("public IPv4 lookup %s returned invalid IP %q", rawURL, ip)
+	}
+	if lastErr != nil {
+		return "", lastErr
+	}
+	return "", fmt.Errorf("public IPv4 not found")
+}
+
+func isIPv6Literal(value string) bool {
+	addr, err := netip.ParseAddr(strings.TrimSpace(value))
+	return err == nil && addr.Is6()
+}
+
+func isPublicIPv4Literal(value string) bool {
+	addr, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil || !addr.Is4() {
+		return false
+	}
+	return addr.IsGlobalUnicast() &&
+		!addr.IsPrivate() &&
+		!addr.IsLoopback() &&
+		!addr.IsLinkLocalUnicast() &&
+		!addr.IsMulticast() &&
+		!addr.IsUnspecified()
 }
 
 func ensureKeyAndCSR(keyPath string, domain string) (string, error) {
