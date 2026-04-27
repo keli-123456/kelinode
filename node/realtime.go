@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"reflect"
 	"strconv"
@@ -28,6 +29,8 @@ var dialRealtimeWS = func(ctx context.Context, rawURL string) (realtimeWSConn, e
 	}
 	return conn, nil
 }
+
+const realtimeReasonSubscriptionProxyCertStateChanged = "subscription_proxy.cert_state_changed"
 
 type realtimeMessage struct {
 	Type      string                  `json:"type"`
@@ -363,6 +366,16 @@ func (c *Controller) runRealtimeConfigWorker(ctx context.Context) {
 			execCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 			c.sendRealtimeReceipt("config", message, "received", "")
 			c.sendRealtimeReceipt("config", message, "applying", "")
+			if shouldForceRealtimeConfigReload(message) {
+				err := c.enqueueRealtimeReload()
+				cancel()
+				if err != nil {
+					c.sendRealtimeReceipt("config", message, "failed", err.Error())
+					continue
+				}
+				c.sendRealtimeReceipt("config", message, "applied", "reload queued")
+				continue
+			}
 			changed, err := c.executeRealtimeConfigCheck(execCtx)
 			cancel()
 			if err != nil {
@@ -377,6 +390,21 @@ func (c *Controller) runRealtimeConfigWorker(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func shouldForceRealtimeConfigReload(message realtimeMessage) bool {
+	return message.Reason == realtimeReasonSubscriptionProxyCertStateChanged
+}
+
+func (c *Controller) enqueueRealtimeReload() error {
+	if c == nil || c.server == nil || c.server.ReloadCh == nil {
+		return errors.New("reload channel is nil")
+	}
+	select {
+	case c.server.ReloadCh <- struct{}{}:
+	default:
+	}
+	return nil
 }
 
 func (c *Controller) runRealtimeUserWorker(ctx context.Context) {
