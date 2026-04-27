@@ -41,8 +41,9 @@ type logConfigV2 struct {
 }
 
 type runtimeConfigV2 struct {
-	GoMemLimit string `mapstructure:"gomemlimit"`
-	GOGC       int    `mapstructure:"gogc"`
+	GoMemLimit         string `mapstructure:"gomemlimit"`
+	GOGC               int    `mapstructure:"gogc"`
+	AutoHY2PortForward bool   `mapstructure:"auto_hy2_port_forward"`
 }
 
 type realtimeConfigV2 struct {
@@ -105,8 +106,9 @@ func (p *Conf) loadFromV2(v *viper.Viper) error {
 	p.HealthPort = cfg.Health
 	p.PprofPort = cfg.Pprof
 	p.RuntimeConfig = RuntimeConfig{
-		GoMemLimit: strings.TrimSpace(cfg.Runtime.GoMemLimit),
-		GOGC:       cfg.Runtime.GOGC,
+		GoMemLimit:         strings.TrimSpace(cfg.Runtime.GoMemLimit),
+		GOGC:               cfg.Runtime.GOGC,
+		AutoHY2PortForward: cfg.Runtime.AutoHY2PortForward,
 	}
 	if cfg.Realtime.Enabled != nil {
 		p.RealtimeConfig.Enabled = *cfg.Realtime.Enabled

@@ -38,6 +38,8 @@ type CommonNode struct {
 	Protocol   string      `json:"protocol"`
 	ListenIP   string      `json:"listen_ip"`
 	ServerPort int         `json:"server_port"`
+	Port       PortValue   `json:"port"`
+	Ports      PortValue   `json:"ports"`
 	Routes     []Route     `json:"routes"`
 	BaseConfig *BaseConfig `json:"base_config"`
 	//vless vmess trojan
@@ -64,6 +66,30 @@ type CommonNode struct {
 	Obfs                    string `json:"obfs"`
 	ObfsPassword            string `json:"obfs-password"`
 	Ignore_Client_Bandwidth bool   `json:"ignore_client_bandwidth"`
+}
+
+type PortValue string
+
+func (p *PortValue) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*p = ""
+		return nil
+	}
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		*p = PortValue(text)
+		return nil
+	}
+	var number int
+	if err := json.Unmarshal(data, &number); err == nil {
+		*p = PortValue(strconv.Itoa(number))
+		return nil
+	}
+	return fmt.Errorf("invalid port value: %s", string(data))
+}
+
+func (p PortValue) String() string {
+	return string(p)
 }
 
 type Route struct {

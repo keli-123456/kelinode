@@ -25,6 +25,7 @@ log:
 runtime:
   gomemlimit: "256MiB"
   gogc: 120
+  auto_hy2_port_forward: true
 health_port: 65530
 realtime:
   enabled: true
@@ -45,7 +46,7 @@ realtime:
 	if cfg.LogConfig.Level != "info" || cfg.LogConfig.CoreLevel != "warn" {
 		t.Fatalf("unexpected log config: %+v", cfg.LogConfig)
 	}
-	if cfg.RuntimeConfig.GoMemLimit != "256MiB" || cfg.RuntimeConfig.GOGC != 120 {
+	if cfg.RuntimeConfig.GoMemLimit != "256MiB" || cfg.RuntimeConfig.GOGC != 120 || !cfg.RuntimeConfig.AutoHY2PortForward {
 		t.Fatalf("unexpected runtime config: %+v", cfg.RuntimeConfig)
 	}
 	if len(cfg.NodeConfigs) != 1 {

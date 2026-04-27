@@ -34,6 +34,7 @@ var (
 		return node.ResolveMachineNodeConfigs(ctx, cfg)
 	}
 	reconcileMachineForReload = func(nodesInstance *node.Node, cfg *conf.Conf, coreInstance *core.V2Core) (*node.ReconcileResult, error) {
+		nodesInstance.SetAutoHY2PortForward(cfg.RuntimeConfig.AutoHY2PortForward)
 		return nodesInstance.Reconcile(context.Background(), cfg.NodeConfigs, cfg.RealtimeConfig, coreInstance, node.MachineOptions{
 			ContinueOnError: cfg.MachineConfig.ContinueOnError,
 		})
@@ -144,13 +145,22 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		log.WithField("err", err).Error("Start core failed")
 		return
 	}
-	defer v2core.Close()
+	defer func() {
+		if v2core != nil {
+			_ = v2core.Close()
+		}
+	}()
 	//node
 	err = nodes.Start(c.NodeConfigs, v2core)
 	if err != nil {
 		log.WithField("err", err).Error("Run nodes failed")
 		return
 	}
+	defer func() {
+		if nodes != nil {
+			_ = nodes.Close()
+		}
+	}()
 	health.MarkReady(true)
 	log.Info("Nodes started")
 	if watch {
@@ -176,7 +186,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		select {
 		case <-osSignals:
 			log.Info("收到退出信号，正在关闭程序...")
-			os.Exit(0)
+			return
 		case <-reloadCh:
 			log.Info("收到重启信号，正在重新加载配置...")
 			health.MarkReady(false)
@@ -286,14 +296,26 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core, health *heal
 }
 
 func newNodeForConfig(cfg *conf.Conf) (*node.Node, error) {
+	var (
+		nodesInstance *node.Node
+		err           error
+	)
 	if cfg != nil && cfg.MachineConfig.Enabled {
 		log.WithFields(log.Fields{
 			"node_count":        len(cfg.NodeConfigs),
 			"continue_on_error": cfg.MachineConfig.ContinueOnError,
 		}).Info("Machine mode enabled")
-		return newMachineNodeForReload(cfg.NodeConfigs, cfg.RealtimeConfig, cfg.MachineConfig)
+		nodesInstance, err = newMachineNodeForReload(cfg.NodeConfigs, cfg.RealtimeConfig, cfg.MachineConfig)
+	} else {
+		nodesInstance, err = newNodeForReload(cfg.NodeConfigs, cfg.RealtimeConfig)
 	}
-	return newNodeForReload(cfg.NodeConfigs, cfg.RealtimeConfig)
+	if err != nil {
+		return nil, err
+	}
+	if cfg != nil {
+		nodesInstance.SetAutoHY2PortForward(cfg.RuntimeConfig.AutoHY2PortForward)
+	}
+	return nodesInstance, nil
 }
 
 func logMachineNodeFailures(nodesInstance *node.Node) {

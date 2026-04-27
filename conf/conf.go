@@ -64,8 +64,9 @@ type RealtimeConfig struct {
 }
 
 type RuntimeConfig struct {
-	GoMemLimit string `mapstructure:"GoMemLimit"`
-	GOGC       int    `mapstructure:"GOGC"`
+	GoMemLimit         string `mapstructure:"GoMemLimit"`
+	GOGC               int    `mapstructure:"GOGC"`
+	AutoHY2PortForward bool   `mapstructure:"AutoHY2PortForward"`
 }
 
 func New() *Conf {
@@ -78,8 +79,9 @@ func New() *Conf {
 		},
 		HealthPort: 0,
 		RuntimeConfig: RuntimeConfig{
-			GoMemLimit: "",
-			GOGC:       0,
+			GoMemLimit:         "",
+			GOGC:               0,
+			AutoHY2PortForward: false,
 		},
 	}
 }

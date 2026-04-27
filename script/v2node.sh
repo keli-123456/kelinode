@@ -101,6 +101,16 @@ confirm_restart() {
     fi
 }
 
+cleanup_hy2_port_forward() {
+    local tool
+    for tool in iptables ip6tables; do
+        command -v "$tool" >/dev/null 2>&1 || continue
+        "$tool" -t nat -D PREROUTING -p udp -j V2NODE-HY2 2>/dev/null || true
+        "$tool" -t nat -F V2NODE-HY2 2>/dev/null || true
+        "$tool" -t nat -X V2NODE-HY2 2>/dev/null || true
+    done
+}
+
 before_show_menu() {
     echo && echo -n -e "${yellow}按回车返回主菜单: ${plain}" && read temp
     show_menu
@@ -182,6 +192,7 @@ uninstall() {
         systemctl daemon-reload
         systemctl reset-failed
     fi
+    cleanup_hy2_port_forward
     rm /etc/v2node/ -rf
     rm /usr/local/v2node/ -rf
 
@@ -225,6 +236,7 @@ stop() {
     else
         systemctl stop v2node
     fi
+    cleanup_hy2_port_forward
     sleep 2
     check_status
     if [[ $? == 1 ]]; then
@@ -452,6 +464,7 @@ log:
 runtime:
   gomemlimit: ""
   gogc: 0
+  auto_hy2_port_forward: true
 
 health_port: 0
 pprof_port: 0

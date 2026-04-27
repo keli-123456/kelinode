@@ -21,10 +21,11 @@ type NodeFailure struct {
 }
 
 type Node struct {
-	controllers []*Controller
-	NodeInfos   []*panel.NodeInfo
-	configs     []conf.NodeConfig
-	failures    []NodeFailure
+	controllers        []*Controller
+	NodeInfos          []*panel.NodeInfo
+	configs            []conf.NodeConfig
+	failures           []NodeFailure
+	autoHY2PortForward bool
 }
 
 func New(nodes []conf.NodeConfig, realtime conf.RealtimeConfig) (*Node, error) {
@@ -91,6 +92,7 @@ func (n *Node) Start(nodes []conf.NodeConfig, core *core.V2Core) error {
 				err)
 		}
 	}
+	n.reconcileAutoHY2PortForward()
 	return nil
 }
 
@@ -103,7 +105,23 @@ func (n *Node) Close() error {
 		}
 	}
 	n.controllers = nil
+	n.NodeInfos = nil
+	n.reconcileAutoHY2PortForward()
 	return nil
+}
+
+func (n *Node) SetAutoHY2PortForward(enabled bool) {
+	if n == nil {
+		return
+	}
+	n.autoHY2PortForward = enabled
+}
+
+func (n *Node) reconcileAutoHY2PortForward() {
+	if n == nil || !n.autoHY2PortForward {
+		return
+	}
+	reconcileHysteriaPortForward(n.NodeInfos)
 }
 
 func (n *Node) ActiveConfigs() []conf.NodeConfig {

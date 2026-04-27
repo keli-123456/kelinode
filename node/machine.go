@@ -192,6 +192,7 @@ func (n *Node) reconcileWithFactory(ctx context.Context, desired []conf.NodeConf
 	n.NodeInfos = nextInfos
 	n.configs = nextConfigs
 	n.failures = result.Failures
+	n.reconcileAutoHY2PortForward()
 	return result, nil
 }
 
