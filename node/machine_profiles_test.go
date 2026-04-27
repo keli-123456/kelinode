@@ -179,6 +179,68 @@ func TestResolveMachineNodeConfigsMergesSubscriptionProxyProfiles(t *testing.T) 
 	}
 }
 
+func TestResolveMachineNodeConfigsAllowsSubscriptionProxyOnly(t *testing.T) {
+	restore := fakeMachineProfileClient(t, func(req *http.Request) (*http.Response, error) {
+		return jsonMachineResponse(http.StatusOK, map[string]any{
+			"nodes": []map[string]any{},
+			"agent": map[string]any{
+				"subscription_proxy": map[string]any{
+					"enabled":           true,
+					"site_id":           "site-one",
+					"upstream_base_url": "https://site-one.example.com",
+					"subscribe_path":    "s",
+				},
+			},
+		}), nil
+	})
+	defer restore()
+
+	cfg := &conf.Conf{
+		MachineConfig: conf.MachineConfig{
+			Enabled: true,
+			Profiles: []conf.MachineProfileConfig{
+				{Name: "site-one", APIHost: "https://site-one.example.com", Key: "machine-token", MachineID: 3},
+			},
+		},
+	}
+
+	if err := ResolveMachineNodeConfigs(context.Background(), cfg); err != nil {
+		t.Fatalf("resolve machine nodes failed: %v", err)
+	}
+	if len(cfg.NodeConfigs) != 0 {
+		t.Fatalf("expected no node configs, got %+v", cfg.NodeConfigs)
+	}
+	proxy := cfg.AgentConfig.SubscriptionProxy
+	if !proxy.Enabled || len(proxy.Profiles) != 1 {
+		t.Fatalf("unexpected subscription proxy config: %+v", proxy)
+	}
+	if got := proxy.Profiles[0]; got.SiteID != "site-one" || got.UpstreamBaseURL != "https://site-one.example.com" || got.SubscribePath != "s" {
+		t.Fatalf("unexpected subscription proxy profile: %+v", got)
+	}
+}
+
+func TestResolveMachineNodeConfigsStillFailsWithoutNodesOrAgent(t *testing.T) {
+	restore := fakeMachineProfileClient(t, func(req *http.Request) (*http.Response, error) {
+		return jsonMachineResponse(http.StatusOK, map[string]any{
+			"nodes": []map[string]any{},
+		}), nil
+	})
+	defer restore()
+
+	cfg := &conf.Conf{
+		MachineConfig: conf.MachineConfig{
+			Enabled: true,
+			Profiles: []conf.MachineProfileConfig{
+				{Name: "site-one", APIHost: "https://site-one.example.com", Key: "machine-token", MachineID: 3},
+			},
+		},
+	}
+
+	if err := ResolveMachineNodeConfigs(context.Background(), cfg); err == nil {
+		t.Fatalf("expected no machine nodes error")
+	}
+}
+
 type machineProfileRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn machineProfileRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

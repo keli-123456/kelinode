@@ -156,7 +156,11 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		return
 	}
 	logMachineNodeFailures(nodes)
-	log.Info("Got nodes info from server")
+	if len(nodes.NodeInfos) == 0 {
+		log.Info("No nodes configured; running agent services only")
+	} else {
+		log.Info("Got nodes info from server")
+	}
 	//core
 	var reloadCh = make(chan struct{}, 1)
 	v2core := core.New(c)
@@ -183,7 +187,11 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		}
 	}()
 	health.MarkReady(true)
-	log.Info("Nodes started")
+	if len(nodes.NodeInfos) == 0 {
+		log.Info("Agent services started")
+	} else {
+		log.Info("Nodes started")
+	}
 	if watch {
 		// On file change, just signal reload; do not run reload concurrently here
 		err = c.Watch(configPath, func() {

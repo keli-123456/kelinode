@@ -3,10 +3,13 @@ package node
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -19,7 +22,32 @@ import (
 )
 
 var machineProfileHTTPClient = func(timeout time.Duration) *http.Client {
-	return &http.Client{Timeout: timeout}
+	dialer := &net.Dialer{
+		Timeout:   15 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: func(ctx context.Context, network string, address string) (net.Conn, error) {
+				if strings.HasPrefix(network, "tcp") {
+					conn, err := dialer.DialContext(ctx, "tcp4", address)
+					if err == nil {
+						return conn, nil
+					}
+					if ctx.Err() != nil {
+						return nil, err
+					}
+				}
+				return dialer.DialContext(ctx, network, address)
+			},
+			TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+			MaxIdleConns:        16,
+			MaxIdleConnsPerHost: 4,
+			IdleConnTimeout:     60 * time.Second,
+		},
+	}
 }
 
 type MachinePanelNode struct {
@@ -67,6 +95,7 @@ func ResolveMachineNodeConfigs(ctx context.Context, cfg *conf.Conf) error {
 	}
 
 	var failures []string
+	successes := 0
 	for _, profile := range cfg.MachineConfig.Profiles {
 		result, err := fetchMachineProfileNodes(ctx, profile)
 		if err != nil {
@@ -81,6 +110,7 @@ func ResolveMachineNodeConfigs(ctx context.Context, cfg *conf.Conf) error {
 			}
 			return err
 		}
+		successes++
 		mergeMachineProfileAgentConfig(cfg, profile, result.Agent)
 
 		for _, panelNode := range result.Nodes {
@@ -109,6 +139,13 @@ func ResolveMachineNodeConfigs(ctx context.Context, cfg *conf.Conf) error {
 	}
 
 	if len(nodes) == 0 {
+		if successes > 0 && canRunSubscriptionProxyOnly(cfg) {
+			log.WithFields(log.Fields{
+				"profiles": len(cfg.AgentConfig.SubscriptionProxy.Profiles),
+			}).Info("No machine nodes resolved; starting subscription proxy only")
+			cfg.NodeConfigs = nodes
+			return nil
+		}
 		if len(failures) > 0 {
 			return fmt.Errorf("no machine nodes resolved: %s", strings.Join(failures, "; "))
 		}
@@ -117,6 +154,30 @@ func ResolveMachineNodeConfigs(ctx context.Context, cfg *conf.Conf) error {
 
 	cfg.NodeConfigs = nodes
 	return nil
+}
+
+func canRunSubscriptionProxyOnly(cfg *conf.Conf) bool {
+	if cfg == nil || !cfg.AgentConfig.SubscriptionProxy.Enabled {
+		return false
+	}
+	proxy := cfg.AgentConfig.SubscriptionProxy
+	if validSubscriptionProxyProfile(proxy.SiteID, proxy.UpstreamBaseURL) {
+		return true
+	}
+	for _, profile := range proxy.Profiles {
+		if validSubscriptionProxyProfile(profile.SiteID, profile.UpstreamBaseURL) {
+			return true
+		}
+	}
+	return false
+}
+
+func validSubscriptionProxyProfile(siteID string, upstreamBaseURL string) bool {
+	if strings.TrimSpace(siteID) == "" {
+		return false
+	}
+	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(upstreamBaseURL), "/"))
+	return err == nil && parsed.Scheme != "" && parsed.Host != ""
 }
 
 func fetchMachineProfileNodes(ctx context.Context, profile conf.MachineProfileConfig) (*machineProfileResult, error) {
