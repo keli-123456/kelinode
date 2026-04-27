@@ -41,20 +41,21 @@ var publicIPv4LookupURLs = []string{
 var detectPublicIPv4Address = detectPublicIPv4
 
 type Status struct {
-	Status            string    `json:"status"`
-	Enabled           bool      `json:"enabled"`
-	Running           bool      `json:"running"`
-	Mode              string    `json:"mode"`
-	HTTPSListen       string    `json:"https_listen"`
-	Profiles          int       `json:"profiles"`
-	CertificateDomain string    `json:"certificate_domain,omitempty"`
-	CertificateID     string    `json:"certificate_id,omitempty"`
-	NeedCertificate   bool      `json:"need_certificate,omitempty"`
-	CSRPem            string    `json:"csr_pem,omitempty"`
-	ValidationReady   bool      `json:"validation_ready,omitempty"`
-	CertNotAfter      string    `json:"cert_not_after,omitempty"`
-	LastError         string    `json:"last_error,omitempty"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	Status                 string    `json:"status"`
+	Enabled                bool      `json:"enabled"`
+	Running                bool      `json:"running"`
+	Mode                   string    `json:"mode"`
+	HTTPSListen            string    `json:"https_listen"`
+	Profiles               int       `json:"profiles"`
+	CertificateDomain      string    `json:"certificate_domain,omitempty"`
+	CertificateOwnerSiteID string    `json:"certificate_owner_site_id,omitempty"`
+	CertificateID          string    `json:"certificate_id,omitempty"`
+	NeedCertificate        bool      `json:"need_certificate,omitempty"`
+	CSRPem                 string    `json:"csr_pem,omitempty"`
+	ValidationReady        bool      `json:"validation_ready,omitempty"`
+	CertNotAfter           string    `json:"cert_not_after,omitempty"`
+	LastError              string    `json:"last_error,omitempty"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 type Manager struct {
@@ -130,6 +131,7 @@ func (m *Manager) Apply(cfg conf.SubscriptionProxyConfig) error {
 
 	certStatus := m.prepareCertificate(&normalized)
 	httpSrv := m.newHTTPServer(normalized)
+	certificateOwnerSiteID := subscriptionProxyCertificateOwnerSiteID(normalized.Profiles)
 
 	profiles := make(map[string]conf.SubscriptionProxyProfile, len(normalized.Profiles))
 	for _, profile := range normalized.Profiles {
@@ -153,14 +155,15 @@ func (m *Manager) Apply(cfg conf.SubscriptionProxyConfig) error {
 			m.httpServer = httpSrv
 			m.fingerprint = nextFingerprint
 			m.status = Status{
-				Status:      "error",
-				Enabled:     true,
-				Running:     false,
-				Mode:        "error",
-				HTTPSListen: normalized.HTTPSListen,
-				Profiles:    len(normalized.Profiles),
-				LastError:   err.Error(),
-				UpdatedAt:   time.Now(),
+				Status:                 "error",
+				Enabled:                true,
+				Running:                false,
+				Mode:                   "error",
+				HTTPSListen:            normalized.HTTPSListen,
+				Profiles:               len(normalized.Profiles),
+				CertificateOwnerSiteID: certificateOwnerSiteID,
+				LastError:              err.Error(),
+				UpdatedAt:              time.Now(),
 			}
 			m.mergeStatusLocked(certStatus)
 			m.mu.Unlock()
@@ -176,13 +179,14 @@ func (m *Manager) Apply(cfg conf.SubscriptionProxyConfig) error {
 	m.httpServer = httpSrv
 	m.fingerprint = nextFingerprint
 	m.status = Status{
-		Status:      "running",
-		Enabled:     true,
-		Running:     true,
-		Mode:        mode,
-		HTTPSListen: normalized.HTTPSListen,
-		Profiles:    len(normalized.Profiles),
-		UpdatedAt:   time.Now(),
+		Status:                 "running",
+		Enabled:                true,
+		Running:                true,
+		Mode:                   mode,
+		HTTPSListen:            normalized.HTTPSListen,
+		Profiles:               len(normalized.Profiles),
+		CertificateOwnerSiteID: certificateOwnerSiteID,
+		UpdatedAt:              time.Now(),
 	}
 	m.mergeStatusLocked(certStatus)
 	m.mu.Unlock()
@@ -447,6 +451,9 @@ func (m *Manager) mergeStatusLocked(next Status) {
 	if next.CertificateDomain != "" {
 		m.status.CertificateDomain = next.CertificateDomain
 	}
+	if next.CertificateOwnerSiteID != "" {
+		m.status.CertificateOwnerSiteID = next.CertificateOwnerSiteID
+	}
 	if next.CertificateID != "" {
 		m.status.CertificateID = next.CertificateID
 	}
@@ -564,6 +571,15 @@ func fingerprint(cfg conf.SubscriptionProxyConfig) string {
 		parts = append(parts, profile.SiteID, profile.UpstreamBaseURL, profile.SubscribePath)
 	}
 	return strings.Join(parts, "\x00")
+}
+
+func subscriptionProxyCertificateOwnerSiteID(profiles []conf.SubscriptionProxyProfile) string {
+	for _, profile := range profiles {
+		if siteID := strings.TrimSpace(profile.SiteID); siteID != "" {
+			return siteID
+		}
+	}
+	return ""
 }
 
 func resolveSubscriptionCertificateDomain(domain string) (string, bool) {

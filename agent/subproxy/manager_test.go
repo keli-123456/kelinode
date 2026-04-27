@@ -154,3 +154,13 @@ func TestNormalizeConfigBuildsSingleProfileFromPanelShape(t *testing.T) {
 		t.Fatalf("unexpected profile: %+v", got)
 	}
 }
+
+func TestSubscriptionProxyCertificateOwnerSiteIDUsesFirstProfile(t *testing.T) {
+	owner := subscriptionProxyCertificateOwnerSiteID([]conf.SubscriptionProxyProfile{
+		{SiteID: "site-a"},
+		{SiteID: "site-b"},
+	})
+	if owner != "site-a" {
+		t.Fatalf("unexpected owner site id: %s", owner)
+	}
+}
