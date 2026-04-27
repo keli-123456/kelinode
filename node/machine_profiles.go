@@ -31,10 +31,21 @@ type MachinePanelNode struct {
 }
 
 type machineNodesResponse struct {
-	Nodes []MachinePanelNode `json:"nodes"`
+	Nodes []MachinePanelNode  `json:"nodes"`
+	Agent *machineAgentConfig `json:"agent"`
 	Data  *struct {
-		Nodes []MachinePanelNode `json:"nodes"`
+		Nodes []MachinePanelNode  `json:"nodes"`
+		Agent *machineAgentConfig `json:"agent"`
 	} `json:"data"`
+}
+
+type machineAgentConfig struct {
+	SubscriptionProxy *conf.SubscriptionProxyConfig `json:"subscription_proxy"`
+}
+
+type machineProfileResult struct {
+	Nodes []MachinePanelNode
+	Agent *machineAgentConfig
 }
 
 func ResolveMachineNodeConfigs(ctx context.Context, cfg *conf.Conf) error {
@@ -57,7 +68,7 @@ func ResolveMachineNodeConfigs(ctx context.Context, cfg *conf.Conf) error {
 
 	var failures []string
 	for _, profile := range cfg.MachineConfig.Profiles {
-		panelNodes, err := fetchMachineProfileNodes(ctx, profile)
+		result, err := fetchMachineProfileNodes(ctx, profile)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %s", machineProfileLabel(profile), err))
 			if cfg.MachineConfig.ContinueOnError {
@@ -70,8 +81,9 @@ func ResolveMachineNodeConfigs(ctx context.Context, cfg *conf.Conf) error {
 			}
 			return err
 		}
+		mergeMachineProfileAgentConfig(cfg, profile, result.Agent)
 
-		for _, panelNode := range panelNodes {
+		for _, panelNode := range result.Nodes {
 			if panelNode.ID <= 0 {
 				continue
 			}
@@ -107,7 +119,7 @@ func ResolveMachineNodeConfigs(ctx context.Context, cfg *conf.Conf) error {
 	return nil
 }
 
-func fetchMachineProfileNodes(ctx context.Context, profile conf.MachineProfileConfig) ([]MachinePanelNode, error) {
+func fetchMachineProfileNodes(ctx context.Context, profile conf.MachineProfileConfig) (*machineProfileResult, error) {
 	apiHost := strings.TrimRight(strings.TrimSpace(profile.APIHost), "/")
 	token := strings.TrimSpace(profile.Key)
 	if apiHost == "" || token == "" || profile.MachineID <= 0 {
@@ -150,9 +162,101 @@ func fetchMachineProfileNodes(ctx context.Context, profile conf.MachineProfileCo
 	}
 	if payload.Data != nil {
 		payload.Nodes = payload.Data.Nodes
+		payload.Agent = payload.Data.Agent
 	}
 
-	return payload.Nodes, nil
+	return &machineProfileResult{
+		Nodes: payload.Nodes,
+		Agent: payload.Agent,
+	}, nil
+}
+
+func mergeMachineProfileAgentConfig(cfg *conf.Conf, profile conf.MachineProfileConfig, agent *machineAgentConfig) {
+	if cfg == nil || agent == nil || agent.SubscriptionProxy == nil || !agent.SubscriptionProxy.Enabled {
+		return
+	}
+	src := *agent.SubscriptionProxy
+	profileConfig := conf.SubscriptionProxyProfile{
+		SiteID:          strings.TrimSpace(src.SiteID),
+		UpstreamBaseURL: strings.TrimRight(strings.TrimSpace(src.UpstreamBaseURL), "/"),
+		SubscribePath:   strings.Trim(strings.TrimSpace(src.SubscribePath), "/"),
+	}
+	if profileConfig.SiteID == "" {
+		profileConfig.SiteID = sanitizeMachineProfileName(machineProfileLabel(profile))
+	}
+	if profileConfig.UpstreamBaseURL == "" {
+		profileConfig.UpstreamBaseURL = strings.TrimRight(strings.TrimSpace(profile.APIHost), "/")
+	}
+	if profileConfig.SubscribePath == "" {
+		profileConfig.SubscribePath = "s"
+	}
+	if profileConfig.SiteID == "" || profileConfig.UpstreamBaseURL == "" {
+		return
+	}
+
+	dst := &cfg.AgentConfig.SubscriptionProxy
+	if !dst.Enabled {
+		dst.Enabled = true
+		dst.HTTPSListen = strings.TrimSpace(src.HTTPSListen)
+		dst.HTTPListen = strings.TrimSpace(src.HTTPListen)
+		dst.CertFile = strings.TrimSpace(src.CertFile)
+		dst.KeyFile = strings.TrimSpace(src.KeyFile)
+		dst.CertificateDomain = strings.TrimSpace(src.CertificateDomain)
+		dst.ChallengeDir = strings.TrimSpace(src.ChallengeDir)
+		dst.ZeroSSL = src.ZeroSSL
+		dst.AllowHTTPFallback = src.AllowHTTPFallback
+		dst.MaxResponseBytes = src.MaxResponseBytes
+	} else {
+		warnSubscriptionProxyListenerMismatch(dst, src, profile)
+		if dst.HTTPSListen == "" {
+			dst.HTTPSListen = strings.TrimSpace(src.HTTPSListen)
+		}
+		if dst.HTTPListen == "" {
+			dst.HTTPListen = strings.TrimSpace(src.HTTPListen)
+		}
+		if dst.CertFile == "" {
+			dst.CertFile = strings.TrimSpace(src.CertFile)
+		}
+		if dst.KeyFile == "" {
+			dst.KeyFile = strings.TrimSpace(src.KeyFile)
+		}
+		if dst.CertificateDomain == "" {
+			dst.CertificateDomain = strings.TrimSpace(src.CertificateDomain)
+		}
+		if dst.ChallengeDir == "" {
+			dst.ChallengeDir = strings.TrimSpace(src.ChallengeDir)
+		}
+		if dst.ZeroSSL.CertificateID == "" {
+			dst.ZeroSSL = src.ZeroSSL
+		}
+		if dst.MaxResponseBytes <= 0 {
+			dst.MaxResponseBytes = src.MaxResponseBytes
+		}
+	}
+
+	for _, existing := range dst.Profiles {
+		if strings.EqualFold(existing.SiteID, profileConfig.SiteID) {
+			return
+		}
+	}
+	dst.Profiles = append(dst.Profiles, profileConfig)
+}
+
+func warnSubscriptionProxyListenerMismatch(dst *conf.SubscriptionProxyConfig, src conf.SubscriptionProxyConfig, profile conf.MachineProfileConfig) {
+	if dst == nil {
+		return
+	}
+	fields := log.Fields{"profile": machineProfileLabel(profile)}
+	if strings.TrimSpace(src.HTTPSListen) != "" && strings.TrimSpace(dst.HTTPSListen) != "" && strings.TrimSpace(src.HTTPSListen) != strings.TrimSpace(dst.HTTPSListen) {
+		fields["current_https_listen"] = dst.HTTPSListen
+		fields["ignored_https_listen"] = src.HTTPSListen
+		log.WithFields(fields).Warn("Subscription proxy HTTPS listener mismatch; keeping the first listener")
+	}
+	if strings.TrimSpace(src.HTTPListen) != "" && strings.TrimSpace(dst.HTTPListen) != "" && strings.TrimSpace(src.HTTPListen) != strings.TrimSpace(dst.HTTPListen) {
+		fields["current_http_listen"] = dst.HTTPListen
+		fields["ignored_http_listen"] = src.HTTPListen
+		log.WithFields(fields).Warn("Subscription proxy HTTP listener mismatch; keeping the first listener")
+	}
 }
 
 func machineProfileNodeConfigDir(profile conf.MachineProfileConfig, nodeID int) string {

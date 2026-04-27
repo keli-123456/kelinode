@@ -14,6 +14,7 @@ type Conf struct {
 	LogConfig      LogConfig      `mapstructure:"Log"`
 	NodeConfigs    []NodeConfig   `mapstructure:"Nodes"`
 	MachineConfig  MachineConfig  `mapstructure:"Machine"`
+	AgentConfig    AgentConfig    `mapstructure:"Agent"`
 	PprofPort      int            `mapstructure:"PprofPort"`
 	HealthPort     int            `mapstructure:"HealthPort"`
 	RuntimeConfig  RuntimeConfig  `mapstructure:"Runtime"`
@@ -61,6 +62,43 @@ type RealtimeConfig struct {
 	URL               string `mapstructure:"Url"`
 	PingInterval      int    `mapstructure:"PingInterval"`
 	ReconnectInterval int    `mapstructure:"ReconnectInterval"`
+}
+
+type AgentConfig struct {
+	SubscriptionProxy SubscriptionProxyConfig `mapstructure:"SubscriptionProxy" json:"subscription_proxy"`
+}
+
+type SubscriptionProxyConfig struct {
+	Enabled           bool                       `mapstructure:"Enabled" json:"enabled"`
+	HTTPSListen       string                     `mapstructure:"HTTPSListen" json:"https_listen"`
+	HTTPListen        string                     `mapstructure:"HTTPListen" json:"http_listen"`
+	CertFile          string                     `mapstructure:"CertFile" json:"cert_file"`
+	KeyFile           string                     `mapstructure:"KeyFile" json:"key_file"`
+	CertificateDomain string                     `mapstructure:"CertificateDomain" json:"certificate_domain"`
+	ChallengeDir      string                     `mapstructure:"ChallengeDir" json:"challenge_dir"`
+	ZeroSSL           ZeroSSLConfig              `mapstructure:"ZeroSSL" json:"zerossl"`
+	SiteID            string                     `mapstructure:"SiteID" json:"site_id"`
+	UpstreamBaseURL   string                     `mapstructure:"UpstreamBaseURL" json:"upstream_base_url"`
+	SubscribePath     string                     `mapstructure:"SubscribePath" json:"subscribe_path"`
+	AllowHTTPFallback bool                       `mapstructure:"AllowHTTPFallback" json:"allow_http_fallback"`
+	MaxResponseBytes  int64                      `mapstructure:"MaxResponseBytes" json:"max_response_bytes"`
+	Profiles          []SubscriptionProxyProfile `mapstructure:"Profiles" json:"profiles"`
+}
+
+type SubscriptionProxyProfile struct {
+	SiteID          string `mapstructure:"SiteID" json:"site_id"`
+	UpstreamBaseURL string `mapstructure:"UpstreamBaseURL" json:"upstream_base_url"`
+	SubscribePath   string `mapstructure:"SubscribePath" json:"subscribe_path"`
+}
+
+type ZeroSSLConfig struct {
+	Status            string `mapstructure:"Status" json:"status"`
+	CertificateID     string `mapstructure:"CertificateID" json:"certificate_id"`
+	ValidationPath    string `mapstructure:"ValidationPath" json:"validation_path"`
+	ValidationContent any    `mapstructure:"ValidationContent" json:"validation_content"`
+	CertificatePEM    string `mapstructure:"CertificatePEM" json:"certificate_pem"`
+	CABundlePEM       string `mapstructure:"CABundlePEM" json:"ca_bundle_pem"`
+	ExpiresAt         string `mapstructure:"ExpiresAt" json:"expires_at"`
 }
 
 type RuntimeConfig struct {

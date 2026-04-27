@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/keli-123456/kelinode/agent/subproxy"
 	"github.com/keli-123456/kelinode/conf"
 	"github.com/keli-123456/kelinode/core"
 	"github.com/keli-123456/kelinode/limiter"
@@ -58,6 +59,18 @@ var (
 		}
 		return coreInstance.Close()
 	}
+	subscriptionProxyManager        = subproxy.NewManager()
+	applySubscriptionProxyForReload = func(cfg conf.SubscriptionProxyConfig) error {
+		return subscriptionProxyManager.Apply(cfg)
+	}
+	closeSubscriptionProxyForReload = func() error {
+		return subscriptionProxyManager.Close()
+	}
+	machineStatusReporter       = newMachineStatusReporterState()
+	applyMachineStatusForReload = func(machine conf.MachineConfig) {
+		machineStatusReporter.Apply(machine, subscriptionProxyManager.Status)
+	}
+	closeMachineStatusForReload = func() { machineStatusReporter.Close() }
 )
 
 var serverCommand = cobra.Command{
@@ -114,6 +127,14 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		log.WithField("err", err).Error("Resolve machine profiles failed")
 		return
 	}
+	applySubscriptionProxy(c.AgentConfig.SubscriptionProxy)
+	applyMachineStatusForReload(c.MachineConfig)
+	defer func() {
+		closeMachineStatusForReload()
+		if err := closeSubscriptionProxyForReload(); err != nil {
+			log.WithField("err", err).Warn("Close subscription proxy failed")
+		}
+	}()
 	appliedRuntime := applyRuntimeSettings(c.RuntimeConfig, runtimeState)
 	health.UpdateConfig(c, appliedRuntime)
 	// Enable pprof if configured
@@ -236,6 +257,8 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core, health *heal
 	if err := prepareNodeConfigsForReload(context.Background(), newConf); err != nil {
 		return err
 	}
+	applySubscriptionProxy(newConf.AgentConfig.SubscriptionProxy)
+	applyMachineStatusForReload(newConf.MachineConfig)
 	appliedRuntime := applyRuntimeSettings(newConf.RuntimeConfig, runtimeState)
 
 	if newConf.MachineConfig.Enabled && *nodes != nil && *v2core != nil {
@@ -293,6 +316,12 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core, health *heal
 
 	runtime.GC()
 	return nil
+}
+
+func applySubscriptionProxy(cfg conf.SubscriptionProxyConfig) {
+	if err := applySubscriptionProxyForReload(cfg); err != nil {
+		log.WithField("err", err).Warn("Subscription proxy apply failed")
+	}
 }
 
 func newNodeForConfig(cfg *conf.Conf) (*node.Node, error) {

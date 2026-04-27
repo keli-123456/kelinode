@@ -34,6 +34,18 @@ func TestResolveMachineNodeConfigsLoadsProfileNodes(t *testing.T) {
 				{"id": 10, "type": "vless", "name": "node-a"},
 				{"id": 11, "type": "trojan", "name": "node-b"},
 			},
+			"agent": map[string]any{
+				"subscription_proxy": map[string]any{
+					"enabled":            true,
+					"site_id":            "panel-a",
+					"upstream_base_url":  "https://panel.example.com",
+					"subscribe_path":     "answer/land",
+					"https_listen":       "0.0.0.0:8443",
+					"cert_file":          "/tmp/cert.pem",
+					"key_file":           "/tmp/key.pem",
+					"max_response_bytes": 1048576,
+				},
+			},
 		}), nil
 	})
 	defer restore()
@@ -68,6 +80,13 @@ func TestResolveMachineNodeConfigsLoadsProfileNodes(t *testing.T) {
 	wantDir := filepath.Join(conf.DefaultNodeConfigDir, "site-a", "node-10")
 	if first.ConfigDir != wantDir {
 		t.Fatalf("unexpected config dir: got %s want %s", first.ConfigDir, wantDir)
+	}
+	proxy := cfg.AgentConfig.SubscriptionProxy
+	if !proxy.Enabled || proxy.HTTPSListen != "0.0.0.0:8443" || len(proxy.Profiles) != 1 {
+		t.Fatalf("unexpected subscription proxy config: %+v", proxy)
+	}
+	if got := proxy.Profiles[0]; got.SiteID != "panel-a" || got.UpstreamBaseURL != "https://panel.example.com" || got.SubscribePath != "answer/land" {
+		t.Fatalf("unexpected subscription proxy profile: %+v", got)
 	}
 }
 
@@ -106,6 +125,57 @@ func TestResolveMachineNodeConfigsContinuesAfterProfileError(t *testing.T) {
 	}
 	if got, want := cfg.NodeConfigs[0].ConfigDir, "/srv/ok/node-21"; got != want {
 		t.Fatalf("unexpected config dir: got %s want %s", got, want)
+	}
+}
+
+func TestResolveMachineNodeConfigsMergesSubscriptionProxyProfiles(t *testing.T) {
+	restore := fakeMachineProfileClient(t, func(req *http.Request) (*http.Response, error) {
+		return jsonMachineResponse(http.StatusOK, map[string]any{
+			"nodes": []map[string]any{
+				{"id": 31, "type": "vless"},
+			},
+			"agent": map[string]any{
+				"subscription_proxy": map[string]any{
+					"enabled":            true,
+					"site_id":            "site-one",
+					"upstream_base_url":  "https://site-one.example.com",
+					"subscribe_path":     "s",
+					"https_listen":       "0.0.0.0:443",
+					"http_listen":        "0.0.0.0:80",
+					"cert_file":          "/etc/v2node/subproxy/cert.pem",
+					"key_file":           "/etc/v2node/subproxy/key.pem",
+					"max_response_bytes": 10485760,
+				},
+			},
+		}), nil
+	})
+	defer restore()
+
+	cfg := &conf.Conf{
+		MachineConfig: conf.MachineConfig{
+			Enabled: true,
+			Profiles: []conf.MachineProfileConfig{
+				{APIHost: "https://site-one.example.com", Key: "machine-token", MachineID: 3},
+			},
+		},
+	}
+
+	if err := ResolveMachineNodeConfigs(context.Background(), cfg); err != nil {
+		t.Fatalf("resolve machine nodes failed: %v", err)
+	}
+
+	proxy := cfg.AgentConfig.SubscriptionProxy
+	if !proxy.Enabled {
+		t.Fatalf("expected subscription proxy to be enabled")
+	}
+	if proxy.HTTPSListen != "0.0.0.0:443" || proxy.CertFile != "/etc/v2node/subproxy/cert.pem" {
+		t.Fatalf("unexpected subscription proxy listener config: %+v", proxy)
+	}
+	if len(proxy.Profiles) != 1 {
+		t.Fatalf("unexpected subscription proxy profiles: %+v", proxy.Profiles)
+	}
+	if got := proxy.Profiles[0]; got.SiteID != "site-one" || got.UpstreamBaseURL != "https://site-one.example.com" || got.SubscribePath != "s" {
+		t.Fatalf("unexpected subscription proxy profile: %+v", got)
 	}
 }
 

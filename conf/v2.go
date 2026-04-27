@@ -15,6 +15,7 @@ type configV2 struct {
 	Runtime  runtimeConfigV2  `mapstructure:"runtime"`
 	Realtime realtimeConfigV2 `mapstructure:"realtime"`
 	Machine  machineConfigV2  `mapstructure:"machine"`
+	Agent    agentConfigV2    `mapstructure:"agent"`
 	Health   int              `mapstructure:"health_port"`
 	Pprof    int              `mapstructure:"pprof_port"`
 	Nodes    []nodeConfigV2   `mapstructure:"nodes"`
@@ -66,6 +67,43 @@ type machineProfileConfigV2 struct {
 	MachineID int    `mapstructure:"machine_id"`
 	Timeout   int    `mapstructure:"timeout"`
 	ConfigDir string `mapstructure:"config_dir"`
+}
+
+type agentConfigV2 struct {
+	SubscriptionProxy subscriptionProxyConfigV2 `mapstructure:"subscription_proxy"`
+}
+
+type subscriptionProxyConfigV2 struct {
+	Enabled           bool                         `mapstructure:"enabled"`
+	HTTPSListen       string                       `mapstructure:"https_listen"`
+	HTTPListen        string                       `mapstructure:"http_listen"`
+	CertFile          string                       `mapstructure:"cert_file"`
+	KeyFile           string                       `mapstructure:"key_file"`
+	CertificateDomain string                       `mapstructure:"certificate_domain"`
+	ChallengeDir      string                       `mapstructure:"challenge_dir"`
+	ZeroSSL           zeroSSLConfigV2              `mapstructure:"zerossl"`
+	SiteID            string                       `mapstructure:"site_id"`
+	UpstreamBaseURL   string                       `mapstructure:"upstream_base_url"`
+	SubscribePath     string                       `mapstructure:"subscribe_path"`
+	AllowHTTPFallback bool                         `mapstructure:"allow_http_fallback"`
+	MaxResponseBytes  int64                        `mapstructure:"max_response_bytes"`
+	Profiles          []subscriptionProxyProfileV2 `mapstructure:"profiles"`
+}
+
+type subscriptionProxyProfileV2 struct {
+	SiteID          string `mapstructure:"site_id"`
+	UpstreamBaseURL string `mapstructure:"upstream_base_url"`
+	SubscribePath   string `mapstructure:"subscribe_path"`
+}
+
+type zeroSSLConfigV2 struct {
+	Status            string `mapstructure:"status"`
+	CertificateID     string `mapstructure:"certificate_id"`
+	ValidationPath    string `mapstructure:"validation_path"`
+	ValidationContent any    `mapstructure:"validation_content"`
+	CertificatePEM    string `mapstructure:"certificate_pem"`
+	CABundlePEM       string `mapstructure:"ca_bundle_pem"`
+	ExpiresAt         string `mapstructure:"expires_at"`
 }
 
 type nodeConfigV2 struct {
@@ -158,6 +196,7 @@ func (p *Conf) loadFromV2(v *viper.Viper) error {
 		})
 	}
 	p.MachineConfig.Profiles = machineProfiles
+	p.AgentConfig.SubscriptionProxy = subscriptionProxyFromV2(cfg.Agent.SubscriptionProxy)
 
 	if len(cfg.Nodes) == 0 {
 		if len(machineProfiles) > 0 {
@@ -203,6 +242,45 @@ func (p *Conf) loadFromV2(v *viper.Viper) error {
 	}
 	p.NodeConfigs = nodes
 	return nil
+}
+
+func subscriptionProxyFromV2(src subscriptionProxyConfigV2) SubscriptionProxyConfig {
+	profiles := make([]SubscriptionProxyProfile, 0, len(src.Profiles))
+	for _, row := range src.Profiles {
+		profiles = append(profiles, SubscriptionProxyProfile{
+			SiteID:          strings.TrimSpace(row.SiteID),
+			UpstreamBaseURL: strings.TrimSpace(row.UpstreamBaseURL),
+			SubscribePath:   strings.Trim(strings.TrimSpace(row.SubscribePath), "/"),
+		})
+	}
+	return SubscriptionProxyConfig{
+		Enabled:           src.Enabled || len(profiles) > 0,
+		HTTPSListen:       strings.TrimSpace(src.HTTPSListen),
+		HTTPListen:        strings.TrimSpace(src.HTTPListen),
+		CertFile:          strings.TrimSpace(src.CertFile),
+		KeyFile:           strings.TrimSpace(src.KeyFile),
+		CertificateDomain: strings.TrimSpace(src.CertificateDomain),
+		ChallengeDir:      strings.TrimSpace(src.ChallengeDir),
+		ZeroSSL:           confZeroSSLFromV2(src.ZeroSSL),
+		SiteID:            strings.TrimSpace(src.SiteID),
+		UpstreamBaseURL:   strings.TrimRight(strings.TrimSpace(src.UpstreamBaseURL), "/"),
+		SubscribePath:     strings.Trim(strings.TrimSpace(src.SubscribePath), "/"),
+		AllowHTTPFallback: src.AllowHTTPFallback,
+		MaxResponseBytes:  src.MaxResponseBytes,
+		Profiles:          profiles,
+	}
+}
+
+func confZeroSSLFromV2(src zeroSSLConfigV2) ZeroSSLConfig {
+	return ZeroSSLConfig{
+		Status:            strings.TrimSpace(src.Status),
+		CertificateID:     strings.TrimSpace(src.CertificateID),
+		ValidationPath:    strings.TrimSpace(src.ValidationPath),
+		ValidationContent: src.ValidationContent,
+		CertificatePEM:    strings.TrimSpace(src.CertificatePEM),
+		CABundlePEM:       strings.TrimSpace(src.CABundlePEM),
+		ExpiresAt:         strings.TrimSpace(src.ExpiresAt),
+	}
 }
 
 func resolveNodeConfigDir(baseDir string, override string, nodeID int, multiNode bool) string {
