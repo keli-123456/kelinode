@@ -223,6 +223,47 @@ func TestWriteCertificateFileMergesLeafAndCABundle(t *testing.T) {
 	}
 }
 
+func TestWriteCertificateFileAppendsSectigoR46CompatibilityChain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fullchain.pem")
+	leafPEM, intermediatePEM := testSectigoR46IssuedChain(t)
+
+	if err := writeCertificateFile(path, string(leafPEM), string(intermediatePEM)); err != nil {
+		t.Fatalf("write certificate file failed: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read certificate file failed: %v", err)
+	}
+	if got := strings.Count(string(data), "BEGIN CERTIFICATE"); got != 3 {
+		t.Fatalf("expected leaf, intermediate, and compatibility certificate, got %d certificate(s)", got)
+	}
+	certs, err := parsePEMCertificates(data)
+	if err != nil {
+		t.Fatalf("parse fullchain failed: %v", err)
+	}
+	if got := certs[1].Subject.CommonName; got != "ZeroSSL RSA DV SSL CA 2" {
+		t.Fatalf("unexpected intermediate subject: %s", got)
+	}
+	if got := certs[2].Subject.CommonName; got != "Sectigo Public Server Authentication Root R46" {
+		t.Fatalf("unexpected compatibility subject: %s", got)
+	}
+	if got := certs[2].Issuer.CommonName; got != "USERTrust RSA Certification Authority" {
+		t.Fatalf("unexpected compatibility issuer: %s", got)
+	}
+
+	pathWithCompat := filepath.Join(t.TempDir(), "fullchain.pem")
+	if err := writeCertificateFile(pathWithCompat, string(leafPEM), string(intermediatePEM)+"\n"+sectigoR46UserTrustCrossSignedPEM); err != nil {
+		t.Fatalf("write certificate file with compatibility certificate failed: %v", err)
+	}
+	dataWithCompat, err := os.ReadFile(pathWithCompat)
+	if err != nil {
+		t.Fatalf("read certificate file with compatibility certificate failed: %v", err)
+	}
+	if got := strings.Count(string(dataWithCompat), "BEGIN CERTIFICATE"); got != 3 {
+		t.Fatalf("compatibility certificate was duplicated, got %d certificate(s)", got)
+	}
+}
+
 func testCertificateChain(t *testing.T) ([]byte, []byte, []byte) {
 	t.Helper()
 	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -269,4 +310,64 @@ func testCertificateChain(t *testing.T) ([]byte, []byte, []byte) {
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(leafKey)})
 	return leafPEM, caPEM, keyPEM
+}
+
+func testSectigoR46IssuedChain(t *testing.T) ([]byte, []byte) {
+	t.Helper()
+	r46Key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate r46 key failed: %v", err)
+	}
+	zeroSSLKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate zerossl key failed: %v", err)
+	}
+	leafKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate leaf key failed: %v", err)
+	}
+
+	now := time.Now()
+	r46Template := &x509.Certificate{
+		SerialNumber:          big.NewInt(10),
+		Subject:               pkix.Name{CommonName: "Sectigo Public Server Authentication Root R46"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	zeroSSLTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(11),
+		Subject:               pkix.Name{CommonName: "ZeroSSL RSA DV SSL CA 2"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLenZero:        true,
+	}
+	zeroSSLDER, err := x509.CreateCertificate(rand.Reader, zeroSSLTemplate, r46Template, &zeroSSLKey.PublicKey, r46Key)
+	if err != nil {
+		t.Fatalf("create zerossl certificate failed: %v", err)
+	}
+
+	leafTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(12),
+		Subject:               pkix.Name{CommonName: "103.14.76.98"},
+		IPAddresses:           []net.IP{net.ParseIP("103.14.76.98")},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, zeroSSLTemplate, &leafKey.PublicKey, zeroSSLKey)
+	if err != nil {
+		t.Fatalf("create leaf certificate failed: %v", err)
+	}
+
+	leafPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})
+	intermediatePEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: zeroSSLDER})
+	return leafPEM, intermediatePEM
 }

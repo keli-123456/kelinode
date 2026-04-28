@@ -1,6 +1,7 @@
 package subproxy
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -31,6 +32,47 @@ const (
 	defaultMaxResponseBytes = int64(10 * 1024 * 1024)
 	defaultChallengeDir     = "/etc/v2node/subproxy/challenges"
 )
+
+// Sectigo R46 cross-signed by USERTrust RSA CA improves compatibility with
+// clients that trust USERTrust but do not yet trust the newer R46 root.
+const sectigoR46UserTrustCrossSignedPEM = `-----BEGIN CERTIFICATE-----
+MIIGlTCCBH2gAwIBAgIRANJ/u8HeNZ5SFq1hSVhgmcQwDQYJKoZIhvcNAQEMBQAw
+gYgxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpOZXcgSmVyc2V5MRQwEgYDVQQHEwtK
+ZXJzZXkgQ2l0eTEeMBwGA1UEChMVVGhlIFVTRVJUUlVTVCBOZXR3b3JrMS4wLAYD
+VQQDEyVVU0VSVHJ1c3QgUlNBIENlcnRpZmljYXRpb24gQXV0aG9yaXR5MB4XDTIx
+MDMyMjAwMDAwMFoXDTM4MDExODIzNTk1OVowXzELMAkGA1UEBhMCR0IxGDAWBgNV
+BAoTD1NlY3RpZ28gTGltaXRlZDE2MDQGA1UEAxMtU2VjdGlnbyBQdWJsaWMgU2Vy
+dmVyIEF1dGhlbnRpY2F0aW9uIFJvb3QgUjQ2MIICIjANBgkqhkiG9w0BAQEFAAOC
+Ag8AMIICCgKCAgEAk77VNlJ12AEjoBxHQknuY7a3If3EldVIKyZ8FFMQ2nn9K7ct
+pNQs+uoy3UnCub0PSD17WphUr55dMXRPB/xQId2kz2hPGxJjbSWZTCqZ80gwYfqB
+fB6nCErcPiscHxhMcao1jK34bug7StnllALWiYQTqm3ITzPMUJY3kjPcX4jnn1TZ
+SPCYQ9Zm/Z8XOEPFAVEL1+MjDxRdWxTnS77d9MjaAzfR1jmhIVEwg7Bt1zBOlluR
+8HAkq79FgWRDDb0hOi886Z4NyyC1QifM2m+b7mQwkDnNk2WBITG1I1AzNyLjOO34
+MTDMRf5i+dFdMnlCh99qzFYZQE3Oqrv5tXZJlPEn+JGlg+UGs2MOgNzgElWApjtm
+tDmHLcjw0NEU6eQNTQ72XVdyxTscR1ad4tX7gWGMzE2AkDRbt9cUddzYBEifwMEo
+iLTpHMqnsfFWt3tJTFnlIBWohAIp+jiUaZpJBo/NH3kUFxIMg3reH7GX7vmXeCik
+yESS6X0mBaZYcpt5E9gRX67FOGI0aLKGMI74kGGeMmz1BzbNokxu7Io27fLmmRVE
+cMN8vJw5wLTha/eDJSNX2RKA5UnwdQ/vjescm1QotCE8/HwK/+97a3X/ix2gGQWr
++vgrgULoOLq7+6r9PeDzyt9Ol5cp7fMYVumllqy9w5CYsuD5otSmR0N8bc8CAwEA
+AaOCASAwggEcMB8GA1UdIwQYMBaAFFN5v1qqK0rPVIDh2JvAnfKyA2bLMB0GA1Ud
+DgQWBBRWc1hklfmSGrASKgRieaFAFYghSTAOBgNVHQ8BAf8EBAMCAYYwDwYDVR0T
+AQH/BAUwAwEB/zAdBgNVHSUEFjAUBggrBgEFBQcDAQYIKwYBBQUHAwIwEQYDVR0g
+BAowCDAGBgRVHSAAMFAGA1UdHwRJMEcwRaBDoEGGP2h0dHA6Ly9jcmwudXNlcnRy
+dXN0LmNvbS9VU0VSVHJ1c3RSU0FDZXJ0aWZpY2F0aW9uQXV0aG9yaXR5LmNybDA1
+BggrBgEFBQcBAQQpMCcwJQYIKwYBBQUHMAGGGWh0dHA6Ly9vY3NwLnVzZXJ0cnVz
+dC5jb20wDQYJKoZIhvcNAQEMBQADggIBADpvBIlq7bMU0cFDT/9P9+BsgCkRgQs0
+S6Bf7vJSlWMHwby0VGvxCS0hrbi0K2BINZbEbsVsgpQq04431yyoVn3Hldorgq24
+RldRDOOipEZDTFB9wC9HYt1thHF00XeG2C8KC1plwoEzKAIhPvefI/C3cT0CfTXJ
+uFjUbKIgSwjNjw6YHtLgoy/hd5+JLUlLco/gzFX/qWbT7tEquOMYpsNKWZj8TLqP
+q6zMiG4Na6feEZte6YPXGrMWlTWN341vDedc+yxQqSug79HJUQcOZs7KyDWztmae
+QxsPE49UV/8XwrfZtZaYyrs4FpD94Z4Q8dzXGL8+qEJjxgcza7W6PROaClubavd1
+VKPm8+aCW77u7SxpR2TFGL6kPdxsKyFijpcunR5V79sUyROfNdzjrAcFWZXK8sbb
+9FlnwuVG677JLv+ZVTX5AxLvW5OB4zt5uS+zB62wJ/Wv+jXGAttSAcJec4iFgCWH
+Rvdi/jJoSzRLa3nEzx6pFIzclSCnh0u1xCeLcUBypSiPga8W+6PkuoyQq8U9qs9E
+oxG5NvrvlyshwUS9yvcZRGw7Ljlx4jJH/BhIPR8kIBCQj1vna9TziZOrw1Of8hDU
+bHKFG9Pm8Dp2vbjz/2JH39qvxshPKVllGfq+5klPm7yZRUYTiCMAbqwNdL/nsqF2
+Rnnyp58XRStJ
+-----END CERTIFICATE-----`
 
 var publicIPv4LookupURLs = []string{
 	"https://api4.ipify.org",
@@ -805,8 +847,61 @@ func writeCertificateFile(path string, certificate string, caBundle string) erro
 	if strings.TrimSpace(caBundle) != "" {
 		fullchain += "\n" + strings.TrimSpace(caBundle)
 	}
+	fullchain = appendCertificateCompatibilityChain(fullchain)
 	fullchain += "\n"
 	return os.WriteFile(path, []byte(fullchain), 0644)
+}
+
+func appendCertificateCompatibilityChain(fullchain string) string {
+	certs, err := parsePEMCertificates([]byte(fullchain))
+	if err != nil || !needsSectigoR46UserTrustCompatibility(certs) {
+		return fullchain
+	}
+	compatCerts, err := parsePEMCertificates([]byte(sectigoR46UserTrustCrossSignedPEM))
+	if err != nil || len(compatCerts) == 0 {
+		return fullchain
+	}
+	for _, cert := range certs {
+		if bytes.Equal(cert.Raw, compatCerts[0].Raw) {
+			return fullchain
+		}
+	}
+	return strings.TrimSpace(fullchain) + "\n" + strings.TrimSpace(sectigoR46UserTrustCrossSignedPEM)
+}
+
+func needsSectigoR46UserTrustCompatibility(certs []*x509.Certificate) bool {
+	hasR46Issuer := false
+	hasCrossSignedR46 := false
+	for _, cert := range certs {
+		if cert.Issuer.CommonName == "Sectigo Public Server Authentication Root R46" {
+			hasR46Issuer = true
+		}
+		if cert.Subject.CommonName == "Sectigo Public Server Authentication Root R46" &&
+			cert.Issuer.CommonName == "USERTrust RSA Certification Authority" {
+			hasCrossSignedR46 = true
+		}
+	}
+	return hasR46Issuer && !hasCrossSignedR46
+}
+
+func parsePEMCertificates(data []byte) ([]*x509.Certificate, error) {
+	certs := []*x509.Certificate{}
+	for {
+		block, rest := pem.Decode(data)
+		if block == nil {
+			break
+		}
+		data = rest
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		certs = append(certs, cert)
+	}
+	return certs, nil
 }
 
 func loadSubscriptionProxyCertificateChain(certFile string, keyFile string) (tls.Certificate, error) {
