@@ -67,8 +67,8 @@ var (
 		return subscriptionProxyManager.Close()
 	}
 	machineStatusReporter       = newMachineStatusReporterState()
-	applyMachineStatusForReload = func(machine conf.MachineConfig, requestReload func()) {
-		machineStatusReporter.Apply(machine, subscriptionProxyManager.Status, requestReload)
+	applyMachineStatusForReload = func(machine conf.MachineConfig, requestReload func(), nodeFailures func() []node.NodeFailure) {
+		machineStatusReporter.Apply(machine, subscriptionProxyManager.Status, requestReload, nodeFailures)
 	}
 	closeMachineStatusForReload = func() { machineStatusReporter.Close() }
 )
@@ -125,12 +125,19 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	}
 	reloadCh := make(chan struct{}, 1)
 	requestReload := func() { queueReload(reloadCh) }
+	var nodes *node.Node
+	nodeFailures := func() []node.NodeFailure {
+		if nodes == nil {
+			return nil
+		}
+		return nodes.Failures()
+	}
 	if err := prepareNodeConfigsForReload(context.Background(), c); err != nil {
 		log.WithField("err", err).Error("Resolve machine profiles failed")
 		return
 	}
 	applySubscriptionProxy(c.AgentConfig.SubscriptionProxy)
-	applyMachineStatusForReload(c.MachineConfig, requestReload)
+	applyMachineStatusForReload(c.MachineConfig, requestReload, nodeFailures)
 	defer func() {
 		closeMachineStatusForReload()
 		if err := closeSubscriptionProxyForReload(); err != nil {
@@ -152,7 +159,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	//init limiter
 	limiter.Init()
 	//get node info
-	nodes, err := newNodeForConfig(c)
+	nodes, err = newNodeForConfig(c)
 	if err != nil {
 		log.WithField("err", err).Error("Get node info failed")
 		return
@@ -208,12 +215,19 @@ func serverHandle(_ *cobra.Command, _ []string) {
 
 	osSignals := make(chan os.Signal, 1)
 	signal.Notify(osSignals, syscall.SIGINT, syscall.SIGTERM)
+	machineFailureRetryTicker := time.NewTicker(time.Minute)
+	defer machineFailureRetryTicker.Stop()
 
 	for {
 		select {
 		case <-osSignals:
 			log.Info("收到退出信号，正在关闭程序...")
 			return
+		case <-machineFailureRetryTicker.C:
+			if nodes != nil && len(nodes.Failures()) > 0 {
+				log.WithField("failures", len(nodes.Failures())).Info("Retrying failed machine nodes")
+				queueReload(reloadCh)
+			}
 		case <-reloadCh:
 			log.Info("收到重启信号，正在重新加载配置...")
 			health.MarkReady(false)
@@ -264,7 +278,12 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core, health *heal
 		return err
 	}
 	applySubscriptionProxy(newConf.AgentConfig.SubscriptionProxy)
-	applyMachineStatusForReload(newConf.MachineConfig, func() { queueReload(oldReloadCh) })
+	applyMachineStatusForReload(newConf.MachineConfig, func() { queueReload(oldReloadCh) }, func() []node.NodeFailure {
+		if nodes == nil || *nodes == nil {
+			return nil
+		}
+		return (*nodes).Failures()
+	})
 	appliedRuntime := applyRuntimeSettings(newConf.RuntimeConfig, runtimeState)
 
 	if newConf.MachineConfig.Enabled && *nodes != nil && *v2core != nil {

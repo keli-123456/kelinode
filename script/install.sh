@@ -49,6 +49,7 @@ MACHINE_URL_ARG=""
 MACHINE_ID_ARG=""
 MACHINE_TOKEN_ARG=""
 MACHINE_NAME_ARG=""
+MACHINE_REPLACE_ID_ARG="false"
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -67,9 +68,11 @@ parse_args() {
                 MACHINE_TOKEN_ARG="$2"; shift 2 ;;
             --machine-name)
                 MACHINE_NAME_ARG="$2"; shift 2 ;;
+            --replace-machine-id)
+                MACHINE_REPLACE_ID_ARG="true"; shift ;;
             -h|--help)
                 echo "用法: $0 [版本号] [--api-host URL] [--node-id ID] [--api-key KEY]"
-                echo "     $0 [版本号] --machine-url URL --machine-id ID --machine-token TOKEN [--machine-name NAME]"
+                echo "     $0 [版本号] --machine-url URL --machine-id ID --machine-token TOKEN [--machine-name NAME] [--replace-machine-id]"
                 exit 0 ;;
             --*)
                 echo "未知参数: $1"; exit 1 ;;
@@ -525,6 +528,7 @@ generate_v2node_machine_config() {
     local machine_id="$2"
     local machine_token="$3"
     local machine_name="$4"
+    local replace_machine_id="${5:-false}"
     local existing_profiles merged_profiles new_config profile_count
 
     machine_url=$(normalize_machine_url "$machine_url")
@@ -543,9 +547,10 @@ generate_v2node_machine_config() {
         -v url="$machine_url" \
         -v token="$machine_token" \
         -v machine_id="$machine_id" \
+        -v replace_machine_id="$replace_machine_id" \
         'BEGIN { updated = 0 }
          {
-             if ($2 == url && $4 == machine_id) {
+             if (($2 == url && $4 == machine_id) || ($3 == token && $4 == machine_id) || (replace_machine_id == "true" && $4 == machine_id)) {
                  if (!updated) {
                      print name "\t" url "\t" token "\t" machine_id "\t15\t"
                      updated = 1
@@ -742,7 +747,7 @@ install_v2node() {
     echo -e "${green}v2node ${last_version}${plain} 已设置开机自启"
 
     if has_machine_args; then
-        generate_v2node_machine_config "$MACHINE_URL_ARG" "$MACHINE_ID_ARG" "$MACHINE_TOKEN_ARG" "$MACHINE_NAME_ARG"
+        generate_v2node_machine_config "$MACHINE_URL_ARG" "$MACHINE_ID_ARG" "$MACHINE_TOKEN_ARG" "$MACHINE_NAME_ARG" "$MACHINE_REPLACE_ID_ARG"
         echo -e "${green}已根据 machine 参数生成 /etc/v2node/config.yml${plain}"
         first_install=false
     elif [[ ! -f /etc/v2node/config.json && ! -f "$V2NODE_CONFIG_FILE" && ! -f /etc/v2node/config.yaml ]]; then

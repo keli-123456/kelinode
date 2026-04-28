@@ -229,6 +229,44 @@ func TestLoadAndSyncUsersFallsBackToFullListWhenDeltaUnsupported(t *testing.T) {
 	assertUserUUIDs(t, users, []string{"user-a", "user-b"})
 }
 
+func TestLoadAndSyncUsersFallsBackToFullListWhenDeltaForbidden(t *testing.T) {
+	t.Parallel()
+
+	nodeConf := &conf.NodeConfig{
+		APIHost:   "https://panel.example.com",
+		NodeID:    18,
+		Key:       "test-token",
+		Timeout:   5,
+		ConfigDir: t.TempDir(),
+	}
+	client := newTestPanelClient(t, 18, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/api/v1/server/UniProxy/user_delta":
+			return jsonResponse(t, req, http.StatusForbidden, map[string]any{"message": "forbidden"}), nil
+		case "/api/v1/server/UniProxy/user":
+			return jsonResponse(t, req, http.StatusOK, map[string]any{
+				"users": []map[string]any{
+					{"id": 1, "uuid": "user-a", "speed_limit": 10, "device_limit": 1},
+					{"id": 2, "uuid": "user-b", "speed_limit": 20, "device_limit": 2},
+				},
+			}), nil
+		default:
+			return jsonResponse(t, req, http.StatusNotFound, map[string]any{"message": "not found"}), nil
+		}
+	}))
+	controller := NewController(client, nodeConf, nil, conf.RealtimeConfig{})
+
+	users, err := controller.loadAndSyncUsers(context.Background())
+	if err != nil {
+		t.Fatalf("load and sync users failed: %v", err)
+	}
+
+	if controller.userDeltaSupported {
+		t.Fatalf("expected user delta support to be disabled after 403 fallback")
+	}
+	assertUserUUIDs(t, users, []string{"user-a", "user-b"})
+}
+
 func TestExecuteNodeUserSyncAppliesDeltaSideEffects(t *testing.T) {
 	t.Parallel()
 

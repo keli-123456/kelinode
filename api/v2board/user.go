@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -120,6 +121,10 @@ func (c *Client) GetUserList(ctx context.Context) ([]UserInfo, error) {
 		}
 		return nil, nil
 	}
+	if r.StatusCode() >= 400 {
+		data, _ := io.ReadAll(io.LimitReader(r.RawResponse.Body, 2048))
+		return nil, fmt.Errorf("user list request failed: %s body=%s", r.Status(), strings.TrimSpace(string(data)))
+	}
 	userlist := &UserListBody{}
 	if strings.Contains(r.Header().Get("Content-Type"), ContentTypeMsgpack) {
 		decoder := msgpack.NewDecoder(r.RawResponse.Body)
@@ -188,7 +193,7 @@ func (c *Client) GetUserDelta(ctx context.Context, since int64) (*UserDeltaBody,
 	if r == nil {
 		return nil, fmt.Errorf("received nil response")
 	}
-	if r.StatusCode() == 404 {
+	if isUserDeltaUnsupportedStatus(r.StatusCode()) {
 		return nil, ErrUserDeltaNotSupported
 	}
 	if r.StatusCode() >= 400 {
@@ -203,6 +208,15 @@ func (c *Client) GetUserDelta(ctx context.Context, since int64) (*UserDeltaBody,
 		return nil, fmt.Errorf("decode user delta error: %w", err)
 	}
 	return resp, nil
+}
+
+func isUserDeltaUnsupportedStatus(statusCode int) bool {
+	switch statusCode {
+	case 403, 404, 405, 501:
+		return true
+	default:
+		return false
+	}
 }
 
 // GetUserAlive will fetch the alive_ip count for users

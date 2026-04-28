@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"testing"
@@ -62,6 +63,24 @@ func TestGetUserAlivePreservesCachedSnapshotOnFailure(t *testing.T) {
 	}
 	if got := len(snapshot.AliveIPs[1]); got != 2 {
 		t.Fatalf("unexpected cached alive ips count: got %d want 2", got)
+	}
+}
+
+func TestGetUserDeltaTreatsForbiddenAsUnsupported(t *testing.T) {
+	t.Parallel()
+
+	client := newTestPanelClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != PathV1UniProxyUserDelta {
+			t.Fatalf("unexpected path: %s", req.URL.Path)
+		}
+		return jsonResponse(t, req, http.StatusForbidden, map[string]any{
+			"message": "forbidden by edge rule",
+		}), nil
+	}))
+
+	_, err := client.GetUserDelta(context.Background(), 0)
+	if !errors.Is(err, ErrUserDeltaNotSupported) {
+		t.Fatalf("expected ErrUserDeltaNotSupported, got %v", err)
 	}
 }
 

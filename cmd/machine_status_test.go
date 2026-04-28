@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/keli-123456/kelinode/agent/subproxy"
 	panel "github.com/keli-123456/kelinode/api/v2board"
 	"github.com/keli-123456/kelinode/conf"
+	"github.com/keli-123456/kelinode/node"
 )
 
 func TestReportMachineStatusParsesReloadHint(t *testing.T) {
@@ -33,7 +35,7 @@ func TestReportMachineStatusParsesReloadHint(t *testing.T) {
 		Timeout:   1,
 	}, func() subproxy.Status {
 		return subproxy.Status{NeedCertificate: true}
-	}, map[string]any{"cpu": 1})
+	}, nil, map[string]any{"cpu": 1})
 	if err != nil {
 		t.Fatalf("reportMachineStatus returned error: %v", err)
 	}
@@ -65,11 +67,40 @@ func TestRunMachineStatusReporterQueuesReloadHint(t *testing.T) {
 	}, func() {
 		queueReload(reloadCh)
 		cancel()
-	})
+	}, nil)
 
 	select {
 	case <-reloadCh:
 	case <-time.After(2 * time.Second):
 		t.Fatalf("expected queued reload")
+	}
+}
+
+func TestBuildMachineNodeFailurePayloadFiltersCurrentProfile(t *testing.T) {
+	errTestMachineStatus := errors.New("test failure")
+	failures := []node.NodeFailure{
+		{
+			Config: conf.NodeConfig{APIHost: "https://panel.example.com", MachineID: 1, NodeID: 51},
+			Err:    errTestMachineStatus,
+		},
+		{
+			Config: conf.NodeConfig{APIHost: "https://other.example.com", MachineID: 1, NodeID: 52},
+			Err:    errTestMachineStatus,
+		},
+	}
+
+	payload := buildMachineNodeFailurePayload(conf.MachineProfileConfig{
+		APIHost:   "https://panel.example.com/",
+		MachineID: 1,
+	}, failures)
+
+	if len(payload) != 1 {
+		t.Fatalf("unexpected failure payload: %+v", payload)
+	}
+	if got := payload[0]["node_id"]; got != 51 {
+		t.Fatalf("unexpected node id: %+v", got)
+	}
+	if got := payload[0]["error"]; got != "test failure" {
+		t.Fatalf("unexpected error: %+v", got)
 	}
 }

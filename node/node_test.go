@@ -62,6 +62,45 @@ func TestNewKeepsFailFastBehavior(t *testing.T) {
 	}
 }
 
+func TestMachineStartSkipsFailedControllersWhenContinueOnError(t *testing.T) {
+	oldStart := startControllerForMachine
+	oldClose := closeControllerForMachine
+	defer func() {
+		startControllerForMachine = oldStart
+		closeControllerForMachine = oldClose
+	}()
+
+	startControllerForMachine = func(controller *Controller, _ *vcore.V2Core) error {
+		if controller.conf != nil && controller.conf.NodeID == 1 {
+			return errors.New("user_delta request failed: 403 Forbidden")
+		}
+		return nil
+	}
+	closeControllerForMachine = func(*Controller) error { return nil }
+
+	cfg1 := conf.NodeConfig{APIHost: "https://blocked.example.com", NodeID: 1, Key: "a", MachineID: 10}
+	cfg2 := conf.NodeConfig{APIHost: "https://healthy.example.com", NodeID: 2, Key: "b", MachineID: 10}
+	manager := &Node{
+		controllers:     []*Controller{{conf: &cfg1}, {conf: &cfg2}},
+		NodeInfos:       []*panel.NodeInfo{testNodeInfo(1, "node-1"), testNodeInfo(2, "node-2")},
+		configs:         []conf.NodeConfig{cfg1, cfg2},
+		continueOnError: true,
+	}
+
+	if err := manager.Start([]conf.NodeConfig{cfg1, cfg2}, &vcore.V2Core{}); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+
+	active := manager.ActiveConfigs()
+	if len(active) != 1 || active[0].NodeID != 2 {
+		t.Fatalf("unexpected active configs: %+v", active)
+	}
+	failures := manager.Failures()
+	if len(failures) != 1 || failures[0].Config.NodeID != 1 {
+		t.Fatalf("unexpected failures: %+v", failures)
+	}
+}
+
 func TestMachineReconcileAddsAndRemovesNodes(t *testing.T) {
 	oldStart := startControllerForMachine
 	oldClose := closeControllerForMachine

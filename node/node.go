@@ -26,6 +26,7 @@ type Node struct {
 	configs            []conf.NodeConfig
 	failures           []NodeFailure
 	autoHY2PortForward bool
+	continueOnError    bool
 }
 
 func New(nodes []conf.NodeConfig, realtime conf.RealtimeConfig) (*Node, error) {
@@ -38,9 +39,10 @@ func NewMachine(nodes []conf.NodeConfig, realtime conf.RealtimeConfig, opts Mach
 
 func newWithFactory(nodes []conf.NodeConfig, realtime conf.RealtimeConfig, factory ControlPlaneFactory, opts MachineOptions) (*Node, error) {
 	n := &Node{
-		controllers: make([]*Controller, 0, len(nodes)),
-		NodeInfos:   make([]*panel.NodeInfo, 0, len(nodes)),
-		configs:     make([]conf.NodeConfig, 0, len(nodes)),
+		controllers:     make([]*Controller, 0, len(nodes)),
+		NodeInfos:       make([]*panel.NodeInfo, 0, len(nodes)),
+		configs:         make([]conf.NodeConfig, 0, len(nodes)),
+		continueOnError: opts.ContinueOnError,
 	}
 	for i := range nodes {
 		nodeConfig := &nodes[i]
@@ -72,7 +74,7 @@ func newWithFactory(nodes []conf.NodeConfig, realtime conf.RealtimeConfig, facto
 		n.NodeInfos = append(n.NodeInfos, info)
 		n.configs = append(n.configs, *nodeConfig)
 	}
-	if len(nodes) > 0 && len(n.controllers) == 0 {
+	if len(nodes) > 0 && len(n.controllers) == 0 && !opts.ContinueOnError {
 		return nil, fmt.Errorf("no available nodes after initialization: %s", n.failureSummary())
 	}
 	return n, nil
@@ -83,8 +85,40 @@ func (n *Node) Start(nodes []conf.NodeConfig, core *core.V2Core) error {
 	if len(activeConfigs) != len(n.controllers) {
 		return fmt.Errorf("node controller/config count mismatch: configs=%d controllers=%d", len(activeConfigs), len(n.controllers))
 	}
+	if n.continueOnError {
+		nextControllers := make([]*Controller, 0, len(n.controllers))
+		nextInfos := make([]*panel.NodeInfo, 0, len(n.NodeInfos))
+		nextConfigs := make([]conf.NodeConfig, 0, len(activeConfigs))
+		failures := append([]NodeFailure(nil), n.failures...)
+
+		for i, node := range activeConfigs {
+			err := startControllerForMachine(n.controllers[i], core)
+			if err != nil {
+				failures = append(failures, NodeFailure{Config: node, Err: err})
+				_ = closeControllerForMachine(n.controllers[i])
+				log.WithFields(log.Fields{
+					"api_host": node.APIHost,
+					"node_id":  node.NodeID,
+					"err":      err,
+				}).Warn("Machine mode skipped node during startup")
+				continue
+			}
+			nextControllers = append(nextControllers, n.controllers[i])
+			if i < len(n.NodeInfos) {
+				nextInfos = append(nextInfos, n.NodeInfos[i])
+			}
+			nextConfigs = append(nextConfigs, node)
+		}
+
+		n.controllers = nextControllers
+		n.NodeInfos = nextInfos
+		n.configs = nextConfigs
+		n.failures = failures
+		n.reconcileAutoHY2PortForward()
+		return nil
+	}
 	for i, node := range activeConfigs {
-		err := n.controllers[i].Start(core)
+		err := startControllerForMachine(n.controllers[i], core)
 		if err != nil {
 			return fmt.Errorf("start node controller [%s-%d] error: %s",
 				node.APIHost,

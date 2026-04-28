@@ -16,6 +16,7 @@ import (
 	"github.com/keli-123456/kelinode/agent/subproxy"
 	panel "github.com/keli-123456/kelinode/api/v2board"
 	"github.com/keli-123456/kelinode/conf"
+	nodepkg "github.com/keli-123456/kelinode/node"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -29,7 +30,7 @@ func newMachineStatusReporterState() *machineStatusReporterState {
 	return &machineStatusReporterState{}
 }
 
-func (s *machineStatusReporterState) Apply(machine conf.MachineConfig, agentStatus func() subproxy.Status, requestReload func()) {
+func (s *machineStatusReporterState) Apply(machine conf.MachineConfig, agentStatus func() subproxy.Status, requestReload func(), nodeFailures func() []nodepkg.NodeFailure) {
 	if s == nil {
 		return
 	}
@@ -53,7 +54,7 @@ func (s *machineStatusReporterState) Apply(machine conf.MachineConfig, agentStat
 	s.fingerprint = nextFingerprint
 	s.mu.Unlock()
 
-	go runMachineStatusReporter(ctx, profiles, agentStatus, requestReload)
+	go runMachineStatusReporter(ctx, profiles, agentStatus, requestReload, nodeFailures)
 }
 
 func (s *machineStatusReporterState) Close() {
@@ -70,12 +71,16 @@ func (s *machineStatusReporterState) Close() {
 	}
 }
 
-func runMachineStatusReporter(ctx context.Context, profiles []conf.MachineProfileConfig, agentStatus func() subproxy.Status, requestReload func()) {
+func runMachineStatusReporter(ctx context.Context, profiles []conf.MachineProfileConfig, agentStatus func() subproxy.Status, requestReload func(), nodeFailures func() []nodepkg.NodeFailure) {
 	systemSampler := newMachineSystemSampler()
 	report := func() {
 		systemStatus := systemSampler.Snapshot()
+		var failures []nodepkg.NodeFailure
+		if nodeFailures != nil {
+			failures = nodeFailures()
+		}
 		for _, profile := range profiles {
-			result, err := reportMachineStatus(ctx, profile, agentStatus, systemStatus)
+			result, err := reportMachineStatus(ctx, profile, agentStatus, failures, systemStatus)
 			if err != nil {
 				log.WithFields(log.Fields{
 					"profile":    profile.Name,
@@ -111,7 +116,7 @@ type machineStatusReportResult struct {
 	Reload bool
 }
 
-func reportMachineStatus(ctx context.Context, profile conf.MachineProfileConfig, agentStatus func() subproxy.Status, systemStatus map[string]any) (machineStatusReportResult, error) {
+func reportMachineStatus(ctx context.Context, profile conf.MachineProfileConfig, agentStatus func() subproxy.Status, nodeFailures []nodepkg.NodeFailure, systemStatus map[string]any) (machineStatusReportResult, error) {
 	apiHost := strings.TrimRight(strings.TrimSpace(profile.APIHost), "/")
 	token := strings.TrimSpace(profile.Key)
 	if apiHost == "" || token == "" || profile.MachineID <= 0 {
@@ -124,6 +129,7 @@ func reportMachineStatus(ctx context.Context, profile conf.MachineProfileConfig,
 			"subscription_proxy": agentStatus(),
 		}
 	}
+	status["node_failures"] = buildMachineNodeFailurePayload(profile, nodeFailures)
 	body, err := json.Marshal(map[string]any{
 		"machine_id": profile.MachineID,
 		"token":      token,
@@ -170,6 +176,31 @@ func reportMachineStatus(ctx context.Context, profile conf.MachineProfileConfig,
 		return machineStatusReportResult{}, fmt.Errorf("decode machine status response failed: %w", err)
 	}
 	return machineStatusReportResult{Reload: payload.Reload}, nil
+}
+
+func buildMachineNodeFailurePayload(profile conf.MachineProfileConfig, failures []nodepkg.NodeFailure) []map[string]any {
+	if len(failures) == 0 {
+		return []map[string]any{}
+	}
+	apiHost := strings.TrimRight(strings.TrimSpace(profile.APIHost), "/")
+	out := make([]map[string]any, 0, len(failures))
+	for _, failure := range failures {
+		cfg := failure.Config
+		if strings.TrimRight(strings.TrimSpace(cfg.APIHost), "/") != apiHost || cfg.MachineID != profile.MachineID {
+			continue
+		}
+		item := map[string]any{
+			"api_host":   cfg.APIHost,
+			"node_id":    cfg.NodeID,
+			"machine_id": cfg.MachineID,
+			"node_type":  "v2node",
+		}
+		if failure.Err != nil {
+			item["error"] = failure.Err.Error()
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func buildMachineStatusPayload(systemStatus map[string]any) map[string]any {
