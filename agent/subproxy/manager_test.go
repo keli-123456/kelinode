@@ -2,11 +2,22 @@ package subproxy
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"io"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/keli-123456/kelinode/conf"
 )
@@ -163,4 +174,99 @@ func TestSubscriptionProxyCertificateOwnerSiteIDUsesFirstProfile(t *testing.T) {
 	if owner != "site-a" {
 		t.Fatalf("unexpected owner site id: %s", owner)
 	}
+}
+
+func TestLoadSubscriptionProxyCertificateChainIncludesIntermediatesAndTLS12(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "fullchain.pem")
+	keyPath := filepath.Join(dir, "private.key")
+	leafPEM, caPEM, keyPEM := testCertificateChain(t)
+	if err := os.WriteFile(certPath, append(leafPEM, caPEM...), 0644); err != nil {
+		t.Fatalf("write cert failed: %v", err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0600); err != nil {
+		t.Fatalf("write key failed: %v", err)
+	}
+
+	cert, err := loadSubscriptionProxyCertificateChain(certPath, keyPath)
+	if err != nil {
+		t.Fatalf("load certificate chain failed: %v", err)
+	}
+	if len(cert.Certificate) != 2 {
+		t.Fatalf("expected full chain with leaf and intermediate, got %d certificate(s)", len(cert.Certificate))
+	}
+
+	tlsConfig := subscriptionProxyTLSConfig(cert)
+	if tlsConfig.MinVersion != tls.VersionTLS12 {
+		t.Fatalf("unexpected minimum TLS version: %d", tlsConfig.MinVersion)
+	}
+	if len(tlsConfig.Certificates) != 1 || len(tlsConfig.Certificates[0].Certificate) != 2 {
+		t.Fatalf("TLS config did not retain full certificate chain: %+v", tlsConfig.Certificates)
+	}
+}
+
+func TestWriteCertificateFileMergesLeafAndCABundle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fullchain.pem")
+	leaf := "-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----"
+	caBundle := "-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----"
+
+	if err := writeCertificateFile(path, leaf, caBundle); err != nil {
+		t.Fatalf("write certificate file failed: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read certificate file failed: %v", err)
+	}
+	want := leaf + "\n" + caBundle + "\n"
+	if string(data) != want {
+		t.Fatalf("unexpected fullchain content:\n%s", string(data))
+	}
+}
+
+func testCertificateChain(t *testing.T) ([]byte, []byte, []byte) {
+	t.Helper()
+	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate ca key failed: %v", err)
+	}
+	leafKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate leaf key failed: %v", err)
+	}
+
+	now := time.Now()
+	caTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "ZeroSSL Test Intermediate"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLenZero:        true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create ca certificate failed: %v", err)
+	}
+
+	leafTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(2),
+		Subject:               pkix.Name{CommonName: "203.0.113.10"},
+		IPAddresses:           []net.IP{net.ParseIP("203.0.113.10")},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caTemplate, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create leaf certificate failed: %v", err)
+	}
+
+	leafPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(leafKey)})
+	return leafPEM, caPEM, keyPEM
 }

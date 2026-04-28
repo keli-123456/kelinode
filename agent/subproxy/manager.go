@@ -145,33 +145,43 @@ func (m *Manager) Apply(cfg conf.SubscriptionProxyConfig) error {
 	}
 
 	mode := "https"
-	serve := func() error {
-		return srv.ListenAndServeTLS(normalized.CertFile, normalized.KeyFile)
+	var serve func() error
+	fail := func(err error) error {
+		m.mu.Lock()
+		m.httpServer = httpSrv
+		m.fingerprint = nextFingerprint
+		m.status = Status{
+			Status:                 "error",
+			Enabled:                true,
+			Running:                false,
+			Mode:                   "error",
+			HTTPSListen:            normalized.HTTPSListen,
+			Profiles:               len(normalized.Profiles),
+			CertificateOwnerSiteID: certificateOwnerSiteID,
+			LastError:              err.Error(),
+			UpdatedAt:              time.Now(),
+		}
+		m.mergeStatusLocked(certStatus)
+		m.mu.Unlock()
+		startHTTPServer(httpSrv, m)
+		return err
 	}
 	if !fileReadable(normalized.CertFile) || !fileReadable(normalized.KeyFile) {
 		if !normalized.AllowHTTPFallback {
 			err := fmt.Errorf("subscription proxy certificate files are not readable: cert=%s key=%s", normalized.CertFile, normalized.KeyFile)
-			m.mu.Lock()
-			m.httpServer = httpSrv
-			m.fingerprint = nextFingerprint
-			m.status = Status{
-				Status:                 "error",
-				Enabled:                true,
-				Running:                false,
-				Mode:                   "error",
-				HTTPSListen:            normalized.HTTPSListen,
-				Profiles:               len(normalized.Profiles),
-				CertificateOwnerSiteID: certificateOwnerSiteID,
-				LastError:              err.Error(),
-				UpdatedAt:              time.Now(),
-			}
-			m.mergeStatusLocked(certStatus)
-			m.mu.Unlock()
-			startHTTPServer(httpSrv, m)
-			return err
+			return fail(err)
 		}
 		mode = "http"
 		serve = srv.ListenAndServe
+	} else {
+		cert, err := loadSubscriptionProxyCertificateChain(normalized.CertFile, normalized.KeyFile)
+		if err != nil {
+			return fail(err)
+		}
+		srv.TLSConfig = subscriptionProxyTLSConfig(cert)
+		serve = func() error {
+			return srv.ListenAndServeTLS("", "")
+		}
 	}
 
 	m.mu.Lock()
@@ -797,6 +807,24 @@ func writeCertificateFile(path string, certificate string, caBundle string) erro
 	}
 	fullchain += "\n"
 	return os.WriteFile(path, []byte(fullchain), 0644)
+}
+
+func loadSubscriptionProxyCertificateChain(certFile string, keyFile string) (tls.Certificate, error) {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("load subscription proxy certificate chain failed: cert=%s key=%s: %w", certFile, keyFile, err)
+	}
+	if len(cert.Certificate) == 0 {
+		return tls.Certificate{}, fmt.Errorf("subscription proxy certificate chain is empty: cert=%s", certFile)
+	}
+	return cert, nil
+}
+
+func subscriptionProxyTLSConfig(cert tls.Certificate) *tls.Config {
+	return &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}
 }
 
 func validationContentString(content any) string {
