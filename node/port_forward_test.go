@@ -42,6 +42,22 @@ func TestBuildHysteriaPortForwardRules(t *testing.T) {
 				Port:       panel.PortValue("443"),
 			},
 		},
+		{
+			Id:   5,
+			Type: "hysteria2",
+			Common: &panel.CommonNode{
+				ServerPort: 443,
+				Port:       panel.PortValue("440-445"),
+			},
+		},
+		{
+			Id:   6,
+			Type: "hysteria2",
+			Common: &panel.CommonNode{
+				ServerPort: 443,
+				Port:       panel.PortValue("443,444,445"),
+			},
+		},
 	}
 
 	rules, errs := buildHysteriaPortForwardRules(infos)
@@ -57,6 +73,9 @@ func TestBuildHysteriaPortForwardRules(t *testing.T) {
 		{"--dport", "30000:30002", "to=443"},
 		{"-m", "multiport", "--dports", "20000,20001,20002", "to=8443"},
 		{"--dport", "21000:21010", "to=9443"},
+		{"--dport", "440:442", "to=443"},
+		{"--dport", "444:445", "to=443"},
+		{"-m", "multiport", "--dports", "444,445", "to=443"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected rules: got %#v want %#v", got, want)

@@ -84,12 +84,9 @@ func buildHysteriaPortForwardRules(infos []*panel.NodeInfo) ([]portForwardRule, 
 			continue
 		}
 
-		matchers, err := parsePortForwardMatchers(externalPort)
+		matchers, err := parsePortForwardMatchersExcept(externalPort, targetPort)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("node %d has invalid port %q: %w", info.Id, externalPort, err))
-			continue
-		}
-		if len(matchers) == 1 && matchers[0].singlePort == targetPort {
 			continue
 		}
 		for _, matcher := range matchers {
@@ -118,6 +115,10 @@ func isHysteriaNode(nodeType string) bool {
 }
 
 func parsePortForwardMatchers(raw string) ([]portForwardMatcher, error) {
+	return parsePortForwardMatchersExcept(raw, 0)
+}
+
+func parsePortForwardMatchersExcept(raw string, excludedPort int) ([]portForwardMatcher, error) {
 	cleaned := strings.ReplaceAll(strings.TrimSpace(raw), " ", "")
 	if cleaned == "" {
 		return nil, fmt.Errorf("empty port")
@@ -126,6 +127,13 @@ func parsePortForwardMatchers(raw string) ([]portForwardMatcher, error) {
 	tokens := strings.Split(cleaned, ",")
 	matchers := make([]portForwardMatcher, 0, len(tokens))
 	singles := make([]string, 0, 15)
+
+	addSingle := func(port int) {
+		if port == excludedPort {
+			return
+		}
+		singles = append(singles, strconv.Itoa(port))
+	}
 
 	flushSingles := func() {
 		for len(singles) > 0 {
@@ -149,6 +157,25 @@ func parsePortForwardMatchers(raw string) ([]portForwardMatcher, error) {
 		}
 	}
 
+	addRange := func(start, end int) {
+		if excludedPort > 0 && start <= excludedPort && excludedPort <= end {
+			if start <= excludedPort-1 {
+				matchers = append(matchers, portForwardMatcher{
+					args: []string{"--dport", fmt.Sprintf("%d:%d", start, excludedPort-1)},
+				})
+			}
+			if excludedPort+1 <= end {
+				matchers = append(matchers, portForwardMatcher{
+					args: []string{"--dport", fmt.Sprintf("%d:%d", excludedPort+1, end)},
+				})
+			}
+			return
+		}
+		matchers = append(matchers, portForwardMatcher{
+			args: []string{"--dport", fmt.Sprintf("%d:%d", start, end)},
+		})
+	}
+
 	for _, token := range tokens {
 		if token == "" {
 			return nil, fmt.Errorf("empty token")
@@ -159,20 +186,18 @@ func parsePortForwardMatchers(raw string) ([]portForwardMatcher, error) {
 				return nil, err
 			}
 			if start == end {
-				singles = append(singles, strconv.Itoa(start))
+				addSingle(start)
 				continue
 			}
 			flushSingles()
-			matchers = append(matchers, portForwardMatcher{
-				args: []string{"--dport", fmt.Sprintf("%d:%d", start, end)},
-			})
+			addRange(start, end)
 			continue
 		}
 		port, err := parsePortNumber(token)
 		if err != nil {
 			return nil, err
 		}
-		singles = append(singles, strconv.Itoa(port))
+		addSingle(port)
 	}
 	flushSingles()
 
@@ -219,14 +244,19 @@ func reconcilePortForwardTool(ctx context.Context, tool string, rules []portForw
 		return nil
 	}
 
+	deletePortForwardJump(ctx, tool)
+	if len(rules) == 0 {
+		_ = runPortForwardCommand(ctx, tool, "-t", "nat", "-F", hysteriaPortForwardChain)
+		_ = runPortForwardCommand(ctx, tool, "-t", "nat", "-X", hysteriaPortForwardChain)
+		return nil
+	}
+
 	_ = runPortForwardCommand(ctx, tool, "-t", "nat", "-N", hysteriaPortForwardChain)
 	if err := runPortForwardCommand(ctx, tool, "-t", "nat", "-F", hysteriaPortForwardChain); err != nil {
 		return err
 	}
-	if err := runPortForwardCommand(ctx, tool, "-t", "nat", "-C", "PREROUTING", "-p", "udp", "-j", hysteriaPortForwardChain); err != nil {
-		if err := runPortForwardCommand(ctx, tool, "-t", "nat", "-A", "PREROUTING", "-p", "udp", "-j", hysteriaPortForwardChain); err != nil {
-			return err
-		}
+	if err := runPortForwardCommand(ctx, tool, "-t", "nat", "-A", "PREROUTING", "-p", "udp", "-j", hysteriaPortForwardChain); err != nil {
+		return err
 	}
 
 	for _, rule := range rules {
@@ -238,6 +268,14 @@ func reconcilePortForwardTool(ctx context.Context, tool string, rules []portForw
 		}
 	}
 	return nil
+}
+
+func deletePortForwardJump(ctx context.Context, tool string) {
+	for {
+		if err := runPortForwardCommand(ctx, tool, "-t", "nat", "-D", "PREROUTING", "-p", "udp", "-j", hysteriaPortForwardChain); err != nil {
+			return
+		}
+	}
 }
 
 func defaultRunPortForwardCommand(ctx context.Context, name string, args ...string) error {
