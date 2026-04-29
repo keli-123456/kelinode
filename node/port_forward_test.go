@@ -109,7 +109,7 @@ func TestParsePortForwardMatchersRejectsInvalidPorts(t *testing.T) {
 	}
 }
 
-func TestReconcilePortForwardToolUsesPortScopedJumps(t *testing.T) {
+func TestReconcilePortForwardToolUsesDirectRedirectRules(t *testing.T) {
 	oldRun := runPortForwardCommand
 	oldOutput := runPortForwardCommandOutput
 	defer func() {
@@ -127,6 +127,7 @@ func TestReconcilePortForwardToolUsesPortScopedJumps(t *testing.T) {
 			return strings.Join([]string{
 				"-A PREROUTING -p udp -j V2NODE-HY2",
 				"-A PREROUTING -p udp --dport 10000:10002 -j V2NODE-HY2",
+				"-A PREROUTING -p udp --dport 30000:30002 -m comment --comment \"V2NODE-HY2\" -j REDIRECT --to-ports 443",
 				"-A PREROUTING -p tcp -j OTHER",
 			}, "\n"), nil
 		}
@@ -151,12 +152,11 @@ func TestReconcilePortForwardToolUsesPortScopedJumps(t *testing.T) {
 	want := [][]string{
 		{"git", "-t", "nat", "-D", "PREROUTING", "-p", "udp", "-j", "V2NODE-HY2"},
 		{"git", "-t", "nat", "-D", "PREROUTING", "-p", "udp", "--dport", "10000:10002", "-j", "V2NODE-HY2"},
-		{"git", "-t", "nat", "-N", "V2NODE-HY2"},
+		{"git", "-t", "nat", "-D", "PREROUTING", "-p", "udp", "--dport", "30000:30002", "-m", "comment", "--comment", "V2NODE-HY2", "-j", "REDIRECT", "--to-ports", "443"},
 		{"git", "-t", "nat", "-F", "V2NODE-HY2"},
-		{"git", "-t", "nat", "-A", "PREROUTING", "-p", "udp", "--dport", "30000:30002", "-j", "V2NODE-HY2"},
-		{"git", "-t", "nat", "-A", "V2NODE-HY2", "-p", "udp", "--dport", "30000:30002", "-j", "REDIRECT", "--to-ports", "443"},
-		{"git", "-t", "nat", "-A", "PREROUTING", "-p", "udp", "-m", "multiport", "--dports", "20000,20001", "-j", "V2NODE-HY2"},
-		{"git", "-t", "nat", "-A", "V2NODE-HY2", "-p", "udp", "-m", "multiport", "--dports", "20000,20001", "-j", "REDIRECT", "--to-ports", "8443"},
+		{"git", "-t", "nat", "-X", "V2NODE-HY2"},
+		{"git", "-t", "nat", "-A", "PREROUTING", "-p", "udp", "--dport", "30000:30002", "-m", "comment", "--comment", "V2NODE-HY2", "-j", "REDIRECT", "--to-ports", "443"},
+		{"git", "-t", "nat", "-A", "PREROUTING", "-p", "udp", "-m", "multiport", "--dports", "20000,20001", "-m", "comment", "--comment", "V2NODE-HY2", "-j", "REDIRECT", "--to-ports", "8443"},
 	}
 	if !reflect.DeepEqual(commands, want) {
 		t.Fatalf("unexpected commands:\ngot  %#v\nwant %#v", commands, want)
