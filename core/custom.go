@@ -50,6 +50,17 @@ func configuredDNSServers(cfg *nodeconf.Conf) []string {
 	return []string{"1.1.1.1", "8.8.8.8"}
 }
 
+func configuredIPStrategy(cfg *nodeconf.Conf) string {
+	if cfg != nil {
+		strategy := strings.TrimSpace(cfg.DNSConfig.QueryStrategy)
+		switch strategy {
+		case "AsIs", "UseIP", "UseIPv4", "UseIPv6", "UseIPv4v6", "UseIPv6v4":
+			return strategy
+		}
+	}
+	return "UseIPv4"
+}
+
 func hasOutboundWithTag(list []*core.OutboundHandlerConfig, tag string) bool {
 	for _, o := range list {
 		if o != nil && o.Tag == tag {
@@ -61,10 +72,7 @@ func hasOutboundWithTag(list []*core.OutboundHandlerConfig, tag string) bool {
 
 func GetCustomConfig(cfg *nodeconf.Conf, infos []*panel.NodeInfo) (*dns.Config, []*core.OutboundHandlerConfig, *router.Config, error) {
 	//dns
-	queryStrategy := "UseIPv4v6"
-	if !hasPublicIPv6() {
-		queryStrategy = "UseIPv4"
-	}
+	queryStrategy := configuredIPStrategy(cfg)
 	dnsServers := configuredDNSServers(cfg)
 	coreDnsConfig := &coreConf.DNSConfig{
 		Servers: make([]*coreConf.NameServerConfig, 0, len(dnsServers)),

@@ -109,7 +109,8 @@ type RuntimeConfig struct {
 }
 
 type DNSConfig struct {
-	Servers []string `mapstructure:"Servers"`
+	Servers       []string `mapstructure:"Servers"`
+	QueryStrategy string   `mapstructure:"QueryStrategy"`
 }
 
 func New() *Conf {

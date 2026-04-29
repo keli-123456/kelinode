@@ -34,6 +34,7 @@ type kernelConfigV2 struct {
 	ConfigDir  string   `mapstructure:"config_dir"`
 	LogLevel   string   `mapstructure:"log_level"`
 	DNSServers []string `mapstructure:"dns_servers"`
+	IPStrategy string   `mapstructure:"ip_strategy"`
 }
 
 type logConfigV2 struct {
@@ -150,7 +151,8 @@ func (p *Conf) loadFromV2(v *viper.Viper) error {
 		AutoHY2PortForward: cfg.Runtime.AutoHY2PortForward,
 	}
 	p.DNSConfig = DNSConfig{
-		Servers: normalizeStringList(cfg.Kernel.DNSServers),
+		Servers:       normalizeStringList(cfg.Kernel.DNSServers),
+		QueryStrategy: strings.TrimSpace(cfg.Kernel.IPStrategy),
 	}
 	if cfg.Realtime.Enabled != nil {
 		p.RealtimeConfig.Enabled = *cfg.Realtime.Enabled

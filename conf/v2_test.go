@@ -20,6 +20,7 @@ panel:
 kernel:
   config_dir: "/var/lib/v2node"
   log_level: "warn"
+  ip_strategy: "UseIPv4"
   dns_servers:
     - "1.1.1.1"
     - "8.8.8.8"
@@ -53,6 +54,9 @@ realtime:
 		cfg.DNSConfig.Servers[0] != "1.1.1.1" ||
 		cfg.DNSConfig.Servers[1] != "8.8.8.8" {
 		t.Fatalf("unexpected dns config: %+v", cfg.DNSConfig)
+	}
+	if cfg.DNSConfig.QueryStrategy != "UseIPv4" {
+		t.Fatalf("unexpected ip strategy: %+v", cfg.DNSConfig)
 	}
 	if cfg.RuntimeConfig.GoMemLimit != "256MiB" || cfg.RuntimeConfig.GOGC != 120 || !cfg.RuntimeConfig.AutoHY2PortForward {
 		t.Fatalf("unexpected runtime config: %+v", cfg.RuntimeConfig)

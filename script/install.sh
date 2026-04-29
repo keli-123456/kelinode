@@ -294,6 +294,7 @@ panel:
 kernel:
   config_dir: "/etc/v2node"
   log_level: "warning"
+  ip_strategy: "UseIPv4"
   dns_servers:
     - "1.1.1.1"
     - "8.8.8.8"
@@ -510,6 +511,7 @@ EOF
 kernel:
   config_dir: "/etc/v2node"
   log_level: "warning"
+  ip_strategy: "UseIPv4"
   dns_servers:
     - "1.1.1.1"
     - "8.8.8.8"
@@ -611,6 +613,7 @@ panel:
 kernel:
   config_dir: "/etc/v2node"
   log_level: "warning"
+  ip_strategy: "UseIPv4"
   dns_servers:
     - "1.1.1.1"
     - "8.8.8.8"
