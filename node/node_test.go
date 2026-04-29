@@ -157,6 +157,121 @@ func TestMachineReconcileAddsAndRemovesNodes(t *testing.T) {
 	}
 }
 
+func TestMachineReconcileReplacesChangedNodeWithPreparedRestart(t *testing.T) {
+	oldStart := startControllerForMachine
+	oldClose := closeControllerForMachine
+	oldReplace := replaceControllerForMachine
+	defer func() {
+		startControllerForMachine = oldStart
+		closeControllerForMachine = oldClose
+		replaceControllerForMachine = oldReplace
+	}()
+
+	startControllerForMachine = func(*Controller, *vcore.V2Core) error {
+		t.Fatalf("changed node should use replacement hook")
+		return nil
+	}
+	closeControllerForMachine = func(*Controller) error {
+		t.Fatalf("changed node should not be closed before replacement hook")
+		return nil
+	}
+	replaced := false
+	replaceControllerForMachine = func(oldController *Controller, newController *Controller, _ *vcore.V2Core) (bool, error) {
+		replaced = true
+		if oldController == nil || oldController.conf == nil || oldController.conf.Timeout != 1 {
+			t.Fatalf("unexpected old controller: %+v", oldController)
+		}
+		if newController == nil || newController.conf == nil || newController.conf.Timeout != 2 {
+			t.Fatalf("unexpected new controller: %+v", newController)
+		}
+		return false, nil
+	}
+
+	oldCfg := conf.NodeConfig{APIHost: "https://panel-a.example.com", NodeID: 1, Key: "a", Timeout: 1}
+	newCfg := conf.NodeConfig{APIHost: "https://panel-a.example.com", NodeID: 1, Key: "a", Timeout: 2}
+	oldInfo := testNodeInfo(1, "node-1")
+	newInfo := testNodeInfo(1, "node-1")
+	newInfo.Common.ServerPort = 10088
+	manager := &Node{
+		controllers: []*Controller{{conf: &oldCfg}},
+		NodeInfos:   []*panel.NodeInfo{oldInfo},
+		configs:     []conf.NodeConfig{oldCfg},
+	}
+
+	result, err := manager.reconcileWithFactory(context.Background(), []conf.NodeConfig{newCfg}, conf.RealtimeConfig{}, nil, fakeControlPlaneFactory{
+		results: map[int]fakeControlPlaneResult{
+			1: {info: newInfo},
+		},
+	}, MachineOptions{ContinueOnError: true})
+	if err != nil {
+		t.Fatalf("reconcileWithFactory returned error: %v", err)
+	}
+	if !replaced {
+		t.Fatalf("expected replacement hook")
+	}
+	if result.Restarted != 1 || result.Added != 0 || result.Removed != 0 {
+		t.Fatalf("unexpected reconcile result: %+v", result)
+	}
+	active := manager.ActiveConfigs()
+	if len(active) != 1 || active[0].Timeout != 2 {
+		t.Fatalf("unexpected active config: %+v", active)
+	}
+}
+
+func TestMachineReconcileKeepsOldControllerWhenReplacementPreparationFails(t *testing.T) {
+	oldStart := startControllerForMachine
+	oldClose := closeControllerForMachine
+	oldReplace := replaceControllerForMachine
+	defer func() {
+		startControllerForMachine = oldStart
+		closeControllerForMachine = oldClose
+		replaceControllerForMachine = oldReplace
+	}()
+
+	startControllerForMachine = func(*Controller, *vcore.V2Core) error {
+		t.Fatalf("changed node should use replacement hook")
+		return nil
+	}
+	closeControllerForMachine = func(*Controller) error {
+		t.Fatalf("old controller should stay active when preparation fails")
+		return nil
+	}
+	replaceControllerForMachine = func(*Controller, *Controller, *vcore.V2Core) (bool, error) {
+		return true, errors.New("prepare failed")
+	}
+
+	oldCfg := conf.NodeConfig{APIHost: "https://panel-a.example.com", NodeID: 1, Key: "a", Timeout: 1}
+	newCfg := conf.NodeConfig{APIHost: "https://panel-a.example.com", NodeID: 1, Key: "a", Timeout: 2}
+	oldController := &Controller{conf: &oldCfg}
+	oldInfo := testNodeInfo(1, "node-1")
+	newInfo := testNodeInfo(1, "node-1")
+	newInfo.Common.ServerPort = 10088
+	manager := &Node{
+		controllers: []*Controller{oldController},
+		NodeInfos:   []*panel.NodeInfo{oldInfo},
+		configs:     []conf.NodeConfig{oldCfg},
+	}
+
+	result, err := manager.reconcileWithFactory(context.Background(), []conf.NodeConfig{newCfg}, conf.RealtimeConfig{}, nil, fakeControlPlaneFactory{
+		results: map[int]fakeControlPlaneResult{
+			1: {info: newInfo},
+		},
+	}, MachineOptions{ContinueOnError: true})
+	if err != nil {
+		t.Fatalf("reconcileWithFactory returned error: %v", err)
+	}
+	if result.Skipped != 1 || len(result.Failures) != 1 {
+		t.Fatalf("unexpected reconcile result: %+v", result)
+	}
+	if len(manager.controllers) != 1 || manager.controllers[0] != oldController {
+		t.Fatalf("old controller was not kept: %+v", manager.controllers)
+	}
+	active := manager.ActiveConfigs()
+	if len(active) != 1 || active[0].Timeout != 1 {
+		t.Fatalf("unexpected active config: %+v", active)
+	}
+}
+
 func TestMachineReconcileRequiresFullReloadForRouteChanges(t *testing.T) {
 	cfg1 := conf.NodeConfig{APIHost: "https://panel-a.example.com", NodeID: 1, Key: "a"}
 	cfg2 := conf.NodeConfig{APIHost: "https://panel-b.example.com", NodeID: 2, Key: "b"}

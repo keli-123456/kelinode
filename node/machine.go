@@ -21,6 +21,10 @@ var closeControllerForMachine = func(controller *Controller) error {
 	return controller.Close()
 }
 
+var replaceControllerForMachine = func(oldController *Controller, newController *Controller, coreInstance *core.V2Core) (bool, error) {
+	return newController.StartReplacing(coreInstance, oldController)
+}
+
 type ReconcileResult struct {
 	Added              int
 	Removed            int
@@ -162,16 +166,23 @@ func (n *Node) reconcileWithFactory(ctx context.Context, desired []conf.NodeConf
 			continue
 		}
 
-		if hasCurrent {
-			if err := closeControllerForMachine(slot.Controller); err != nil {
-				return nil, fmt.Errorf("close changed node [%s-%d] error: %w", slot.Config.APIHost, slot.Config.NodeID, err)
-			}
-		}
-
 		cfg := candidate.Config
 		controller := NewControllerWithControlPlane(candidate.ControlPlane, &cfg, candidate.Info, realtime)
-		if err := startControllerForMachine(controller, coreInstance); err != nil {
-			_ = closeControllerForMachine(controller)
+		var err error
+		oldStillActive := false
+		if hasCurrent {
+			oldStillActive, err = replaceControllerForMachine(slot.Controller, controller, coreInstance)
+		} else {
+			err = startControllerForMachine(controller, coreInstance)
+		}
+		if err != nil {
+			if !hasCurrent {
+				_ = closeControllerForMachine(controller)
+			} else if oldStillActive {
+				nextControllers = append(nextControllers, slot.Controller)
+				nextInfos = append(nextInfos, slot.Info)
+				nextConfigs = append(nextConfigs, slot.Config)
+			}
 			if err := handleMachineFailure(result, candidate.Config, err, opts); err != nil {
 				return nil, err
 			}

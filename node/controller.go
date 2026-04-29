@@ -47,6 +47,13 @@ type Controller struct {
 	addUsersFn                func(context.Context, *core.AddUsersParams) (int, error)
 }
 
+type controllerStartState struct {
+	node          *panel.NodeInfo
+	userList      []panel.UserInfo
+	aliveMap      map[int]int
+	aliveSnapshot *panel.AliveMap
+}
+
 // NewController return a Node controller with default parameters.
 func NewController(api *panel.Client, conf *conf.NodeConfig, info *panel.NodeInfo, realtime conf.RealtimeConfig) *Controller {
 	return NewControllerWithControlPlane(newPanelControlPlane(api, conf), conf, info, realtime)
@@ -70,18 +77,43 @@ func NewControllerWithControlPlane(controlPlane ControlPlane, conf *conf.NodeCon
 
 // Start implement the Start() function of the service interface
 func (c *Controller) Start(x *core.V2Core) error {
-	// Init Core
+	state, err := c.prepareStart(x)
+	if err != nil {
+		return err
+	}
+	return c.activatePreparedStart(state)
+}
+
+func (c *Controller) StartReplacing(x *core.V2Core, old *Controller) (bool, error) {
+	state, err := c.prepareStart(x)
+	if err != nil {
+		return true, err
+	}
+	if old != nil {
+		if err := old.Close(); err != nil {
+			return false, err
+		}
+	}
+	if err := c.activatePreparedStart(state); err != nil {
+		_ = c.Close()
+		return false, err
+	}
+	return false, nil
+}
+
+func (c *Controller) prepareStart(x *core.V2Core) (*controllerStartState, error) {
 	c.server = x
-	var err error
-	// First fetch Node Info
 	node := c.info
 	if node == nil {
+		var err error
 		c.info, err = c.controlPlane.GetNodeInfo(context.Background())
 		if err != nil {
-			return fmt.Errorf("get node info error: %s", err)
+			return nil, fmt.Errorf("get node info error: %s", err)
 		}
 		node = c.info
 	}
+	c.info = node
+	c.tag = node.Tag
 	if bootstrapProvider, ok := c.controlPlane.(ControlPlaneRealtimeBootstrap); ok {
 		bootstrap, err := bootstrapProvider.GetRealtimeBootstrap(context.Background())
 		if err != nil {
@@ -91,41 +123,57 @@ func (c *Controller) Start(x *core.V2Core) error {
 			c.realtimeConfig.URL = strings.TrimSpace(bootstrap.URL)
 		}
 	}
-	// Update user
-	c.userList, err = c.loadAndSyncUsers(context.Background())
+	userList, err := c.loadAndSyncUsers(context.Background())
 	if err != nil {
-		return fmt.Errorf("get user list error: %s", err)
+		return nil, fmt.Errorf("get user list error: %s", err)
 	}
-	if len(c.userList) == 0 {
-		return errors.New("add users error: not have any user")
+	if len(userList) == 0 {
+		return nil, errors.New("add users error: not have any user")
 	}
-	c.aliveMap, err = c.controlPlane.GetUserAlive(context.Background())
+	aliveMap, err := c.controlPlane.GetUserAlive(context.Background())
 	if err != nil {
 		log.WithFields(log.Fields{
 			"tag": node.Tag,
 			"err": err,
 		}).Warn("Get user alive list failed, starting with cached snapshot")
-		c.aliveMap = c.controlPlane.CachedAliveMap()
+		aliveMap = c.controlPlane.CachedAliveMap()
 	}
-	c.aliveSnapshot = c.controlPlane.CachedAliveSnapshot()
-	if c.aliveMap == nil {
-		c.aliveMap = make(map[int]int)
+	aliveSnapshot := c.controlPlane.CachedAliveSnapshot()
+	if aliveMap == nil {
+		aliveMap = make(map[int]int)
 	}
+
+	if node.Security == panel.Tls {
+		if err := c.requestCert(); err != nil {
+			return nil, fmt.Errorf("request cert error: %s", err)
+		}
+	}
+
+	return &controllerStartState{
+		node:          node,
+		userList:      userList,
+		aliveMap:      aliveMap,
+		aliveSnapshot: aliveSnapshot,
+	}, nil
+}
+
+func (c *Controller) activatePreparedStart(state *controllerStartState) error {
+	if state == nil || state.node == nil {
+		return errors.New("prepared node state is empty")
+	}
+	node := state.node
+	c.info = node
+	c.userList = state.userList
+	c.aliveMap = state.aliveMap
+	c.aliveSnapshot = state.aliveSnapshot
 	c.tag = node.Tag
 
-	// add limiter
 	l := limiter.AddLimiter(c.info.Type, c.tag, c.userList, c.aliveMap)
 	l.SetAliveSnapshot(c.aliveSnapshot)
 	l.SetDefaultDeviceLimit(defaultDeviceLimitFromNode(node))
 	c.limiter = l
-	if node.Security == panel.Tls {
-		err = c.requestCert()
-		if err != nil {
-			return fmt.Errorf("request cert error: %s", err)
-		}
-	}
-	// Add new tag
-	err = c.server.AddNode(c.tag, node)
+
+	err := c.server.AddNode(c.tag, node)
 	if err != nil {
 		return fmt.Errorf("add new node error: %s", err)
 	}
