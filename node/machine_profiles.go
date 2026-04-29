@@ -59,12 +59,18 @@ type MachinePanelNode struct {
 }
 
 type machineNodesResponse struct {
-	Nodes []MachinePanelNode  `json:"nodes"`
-	Agent *machineAgentConfig `json:"agent"`
-	Data  *struct {
-		Nodes []MachinePanelNode  `json:"nodes"`
-		Agent *machineAgentConfig `json:"agent"`
+	Nodes      []MachinePanelNode       `json:"nodes"`
+	BaseConfig *machineProfileBaseConfig `json:"base_config"`
+	Agent      *machineAgentConfig      `json:"agent"`
+	Data       *struct {
+		Nodes      []MachinePanelNode       `json:"nodes"`
+		BaseConfig *machineProfileBaseConfig `json:"base_config"`
+		Agent      *machineAgentConfig      `json:"agent"`
 	} `json:"data"`
+}
+
+type machineProfileBaseConfig struct {
+	Realtime *panel.RealtimeBaseConfig `json:"realtime"`
 }
 
 type machineAgentConfig struct {
@@ -72,8 +78,9 @@ type machineAgentConfig struct {
 }
 
 type machineProfileResult struct {
-	Nodes []MachinePanelNode
-	Agent *machineAgentConfig
+	Nodes      []MachinePanelNode
+	BaseConfig *machineProfileBaseConfig
+	Agent      *machineAgentConfig
 }
 
 func ResolveMachineNodeConfigs(ctx context.Context, cfg *conf.Conf) error {
@@ -96,7 +103,8 @@ func ResolveMachineNodeConfigs(ctx context.Context, cfg *conf.Conf) error {
 
 	var failures []string
 	successes := 0
-	for _, profile := range cfg.MachineConfig.Profiles {
+	for i := range cfg.MachineConfig.Profiles {
+		profile := cfg.MachineConfig.Profiles[i]
 		result, err := fetchMachineProfileNodes(ctx, profile)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %s", machineProfileLabel(profile), err))
@@ -111,6 +119,7 @@ func ResolveMachineNodeConfigs(ctx context.Context, cfg *conf.Conf) error {
 			return err
 		}
 		successes++
+		cfg.MachineConfig.Profiles[i].Realtime = machineRealtimeConfigFromProfileResult(result)
 		mergeMachineProfileAgentConfig(cfg, profile, result.Agent)
 
 		for _, panelNode := range result.Nodes {
@@ -223,13 +232,43 @@ func fetchMachineProfileNodes(ctx context.Context, profile conf.MachineProfileCo
 	}
 	if payload.Data != nil {
 		payload.Nodes = payload.Data.Nodes
+		payload.BaseConfig = payload.Data.BaseConfig
 		payload.Agent = payload.Data.Agent
 	}
 
 	return &machineProfileResult{
-		Nodes: payload.Nodes,
-		Agent: payload.Agent,
+		Nodes:      payload.Nodes,
+		BaseConfig: payload.BaseConfig,
+		Agent:      payload.Agent,
 	}, nil
+}
+
+func machineRealtimeConfigFromProfileResult(result *machineProfileResult) conf.RealtimeConfig {
+	if result == nil || result.BaseConfig == nil || result.BaseConfig.Realtime == nil {
+		return conf.RealtimeConfig{}
+	}
+	realtime := result.BaseConfig.Realtime
+	return conf.RealtimeConfig{
+		Enabled:      realtime.Enabled,
+		URL:          strings.TrimSpace(realtime.URL),
+		PingInterval: machineRealtimeIntervalSeconds(realtime.PingInterval),
+	}
+}
+
+func machineRealtimeIntervalSeconds(value any) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case string:
+		seconds, _ := strconv.Atoi(strings.TrimSpace(v))
+		return seconds
+	default:
+		return 0
+	}
 }
 
 func mergeMachineProfileAgentConfig(cfg *conf.Conf, profile conf.MachineProfileConfig, agent *machineAgentConfig) {

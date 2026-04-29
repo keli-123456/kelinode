@@ -50,12 +50,13 @@ type MachineConfig struct {
 }
 
 type MachineProfileConfig struct {
-	Name      string `mapstructure:"Name"`
-	APIHost   string `mapstructure:"ApiHost"`
-	Key       string `mapstructure:"ApiKey"`
-	MachineID int    `mapstructure:"MachineID"`
-	Timeout   int    `mapstructure:"Timeout"`
-	ConfigDir string `mapstructure:"ConfigDir"`
+	Name      string         `mapstructure:"Name"`
+	APIHost   string         `mapstructure:"ApiHost"`
+	Key       string         `mapstructure:"ApiKey"`
+	MachineID int            `mapstructure:"MachineID"`
+	Timeout   int            `mapstructure:"Timeout"`
+	ConfigDir string         `mapstructure:"ConfigDir"`
+	Realtime  RealtimeConfig `mapstructure:"-"`
 }
 
 type RealtimeConfig struct {

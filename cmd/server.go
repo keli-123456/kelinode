@@ -72,6 +72,11 @@ var (
 		machineStatusReporter.Apply(machine, subscriptionProxyManager.Status, requestReload, nodeFailures)
 	}
 	closeMachineStatusForReload = func() { machineStatusReporter.Close() }
+	machineRealtimeReporter       = newMachineRealtimeState()
+	applyMachineRealtimeForReload = func(machine conf.MachineConfig, realtime conf.RealtimeConfig, requestReload func()) {
+		machineRealtimeReporter.Apply(machine, realtime, requestReload)
+	}
+	closeMachineRealtimeForReload = func() { machineRealtimeReporter.Close() }
 )
 
 var serverCommand = cobra.Command{
@@ -139,7 +144,9 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	}
 	applySubscriptionProxy(c.AgentConfig.SubscriptionProxy)
 	applyMachineStatusForReload(c.MachineConfig, requestReload, nodeFailures)
+	applyMachineRealtimeForReload(c.MachineConfig, c.RealtimeConfig, requestReload)
 	defer func() {
+		closeMachineRealtimeForReload()
 		closeMachineStatusForReload()
 		if err := closeSubscriptionProxyForReload(); err != nil {
 			log.WithField("err", err).Warn("Close subscription proxy failed")
@@ -302,6 +309,7 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core, health *heal
 		}
 		return (*nodes).Failures()
 	})
+	applyMachineRealtimeForReload(newConf.MachineConfig, newConf.RealtimeConfig, func() { queueReload(oldReloadCh) })
 	appliedRuntime := applyRuntimeSettings(newConf.RuntimeConfig, runtimeState)
 
 	if newConf.MachineConfig.Enabled && *nodes != nil && *v2core != nil {

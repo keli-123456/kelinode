@@ -46,6 +46,13 @@ func TestResolveMachineNodeConfigsLoadsProfileNodes(t *testing.T) {
 					"max_response_bytes": 1048576,
 				},
 			},
+			"base_config": map[string]any{
+				"realtime": map[string]any{
+					"enabled":       true,
+					"url":           "wss://panel.example.com/ws/node",
+					"ping_interval": 15,
+				},
+			},
 		}), nil
 	})
 	defer restore()
@@ -87,6 +94,9 @@ func TestResolveMachineNodeConfigsLoadsProfileNodes(t *testing.T) {
 	}
 	if got := proxy.Profiles[0]; got.SiteID != "panel-a" || got.UpstreamBaseURL != "https://panel.example.com" || got.SubscribePath != "answer/land" {
 		t.Fatalf("unexpected subscription proxy profile: %+v", got)
+	}
+	if realtime := cfg.MachineConfig.Profiles[0].Realtime; !realtime.Enabled || realtime.URL != "wss://panel.example.com/ws/node" || realtime.PingInterval != 15 {
+		t.Fatalf("unexpected machine realtime config: %+v", realtime)
 	}
 }
 

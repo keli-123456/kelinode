@@ -259,6 +259,35 @@ func TestResolveRealtimeOptionsDisabled(t *testing.T) {
 	}
 }
 
+func TestResolveMachineRealtimeOptionsUsesProfileBootstrap(t *testing.T) {
+	options := resolveMachineRealtimeOptions(conf.MachineProfileConfig{
+		APIHost:   "https://panel.example.com",
+		Key:       "machine-token",
+		MachineID: 7,
+		Realtime: conf.RealtimeConfig{
+			Enabled:      true,
+			URL:          "wss://panel.example.com/ws/node",
+			PingInterval: 12,
+		},
+	}, conf.RealtimeConfig{})
+
+	if options == nil {
+		t.Fatalf("expected machine realtime options")
+	}
+	if got, want := options.URL, "wss://panel.example.com/ws/node"; got != want {
+		t.Fatalf("unexpected url: got %q want %q", got, want)
+	}
+	if got, want := options.NodeID, 0; got != want {
+		t.Fatalf("unexpected node id: got %d want %d", got, want)
+	}
+	if got, want := options.MachineID, 7; got != want {
+		t.Fatalf("unexpected machine id: got %d want %d", got, want)
+	}
+	if got, want := options.PingInterval, 12*time.Second; got != want {
+		t.Fatalf("unexpected ping interval: got %s want %s", got, want)
+	}
+}
+
 type fakeRealtimeConn struct {
 	readCh  chan fakeRealtimeRead
 	closeCh chan struct{}

@@ -20,6 +20,9 @@ log:
 runtime:
   gomemlimit: "512MiB"
   gogc: 100
+  # When enabled, v2node maintains direct iptables REDIRECT rules for HY2
+  # external port ranges. Use `v2node rules status` to inspect them.
+  auto_hy2_port_forward: false
 
 health_port: 65530
 pprof_port: 0

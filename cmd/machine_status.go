@@ -127,6 +127,7 @@ func reportMachineStatus(ctx context.Context, profile conf.MachineProfileConfig,
 	if agentStatus != nil {
 		status["agent"] = map[string]any{
 			"subscription_proxy": agentStatus(),
+			"hy2_port_forward":   nodepkg.GetHysteriaPortForwardStatusSnapshot(),
 		}
 	}
 	status["node_failures"] = buildMachineNodeFailurePayload(profile, nodeFailures)

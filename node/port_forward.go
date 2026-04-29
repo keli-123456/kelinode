@@ -3,7 +3,6 @@ package node
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -35,29 +34,21 @@ var (
 )
 
 func reconcileHysteriaPortForward(infos []*panel.NodeInfo) {
-	rules, errs := buildHysteriaPortForwardRules(infos)
-	for _, err := range errs {
-		log.WithField("err", err).Warn("Skipped HY2 port forwarding rule")
-	}
-
-	if os.Geteuid() != 0 {
-		if len(rules) > 0 {
-			log.Warn("HY2 port forwarding is enabled but v2node is not running as root")
-		}
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	for _, tool := range []string{"iptables", "ip6tables"} {
-		if err := reconcilePortForwardTool(ctx, tool, rules); err != nil {
+	status := RepairHysteriaPortForward(ctx, infos)
+	for _, err := range status.Errors {
+		log.WithField("err", err).Warn("HY2 port forwarding reconcile warning")
+	}
+	for _, toolStatus := range status.Tools {
+		if toolStatus.Error != "" {
 			entry := log.WithFields(log.Fields{
-				"tool":  tool,
+				"tool":  toolStatus.Tool,
 				"chain": hysteriaPortForwardChain,
-				"err":   err,
+				"err":   toolStatus.Error,
 			})
-			if tool == "ip6tables" {
+			if toolStatus.Tool == "ip6tables" {
 				entry.Debug("Failed to reconcile HY2 IPv6 port forwarding")
 				continue
 			}

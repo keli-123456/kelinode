@@ -163,6 +163,51 @@ func TestReconcilePortForwardToolUsesDirectRedirectRules(t *testing.T) {
 	}
 }
 
+func TestInspectPortForwardToolDetectsDrift(t *testing.T) {
+	oldOutput := runPortForwardCommandOutput
+	defer func() {
+		runPortForwardCommandOutput = oldOutput
+	}()
+
+	runPortForwardCommandOutput = func(_ context.Context, _ string, args ...string) (string, error) {
+		if reflect.DeepEqual(args, []string{"-t", "nat", "-S", "PREROUTING"}) {
+			return strings.Join([]string{
+				"-A PREROUTING -p udp -m udp --dport 10000:10002 -j V2NODE-HY2",
+				"-A PREROUTING -p udp -m udp --dport 30000:30002 -m comment --comment \"V2NODE-HY2\" -j REDIRECT --to-ports 443",
+			}, "\n"), nil
+		}
+		if reflect.DeepEqual(args, []string{"-t", "nat", "-S", "V2NODE-HY2"}) {
+			return "-N V2NODE-HY2\n", nil
+		}
+		return "", fmt.Errorf("unexpected output command: %v", args)
+	}
+
+	rules := []portForwardRule{
+		{
+			matcher:    portForwardMatcher{args: []string{"--dport", "30000:30002"}},
+			targetPort: 443,
+		},
+		{
+			matcher:    portForwardMatcher{args: []string{"--dport", "20000:20002"}},
+			targetPort: 8443,
+		},
+	}
+
+	status := inspectPortForwardTool(context.Background(), "git", rules)
+	if !status.Available {
+		t.Fatalf("expected git to be available")
+	}
+	if !status.StaleChain {
+		t.Fatalf("expected stale chain")
+	}
+	if len(status.Missing) != 1 || !strings.Contains(status.Missing[0], "20000:20002") {
+		t.Fatalf("unexpected missing rules: %+v", status.Missing)
+	}
+	if len(status.Extra) != 1 || !strings.Contains(status.Extra[0], "V2NODE-HY2") {
+		t.Fatalf("unexpected extra rules: %+v", status.Extra)
+	}
+}
+
 func ruleTarget(port int) string {
 	return "to=" + strconv.Itoa(port)
 }

@@ -152,7 +152,12 @@ func (n *Node) SetAutoHY2PortForward(enabled bool) {
 }
 
 func (n *Node) reconcileAutoHY2PortForward() {
-	if n == nil || !n.autoHY2PortForward {
+	if n == nil {
+		SetHysteriaPortForwardDisabled()
+		return
+	}
+	if !n.autoHY2PortForward {
+		SetHysteriaPortForwardDisabled()
 		return
 	}
 	reconcileHysteriaPortForward(n.NodeInfos)
