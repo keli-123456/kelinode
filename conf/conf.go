@@ -15,6 +15,7 @@ type Conf struct {
 	NodeConfigs    []NodeConfig   `mapstructure:"Nodes"`
 	MachineConfig  MachineConfig  `mapstructure:"Machine"`
 	AgentConfig    AgentConfig    `mapstructure:"Agent"`
+	DNSConfig      DNSConfig      `mapstructure:"DNS"`
 	PprofPort      int            `mapstructure:"PprofPort"`
 	HealthPort     int            `mapstructure:"HealthPort"`
 	RuntimeConfig  RuntimeConfig  `mapstructure:"Runtime"`
@@ -105,6 +106,10 @@ type RuntimeConfig struct {
 	GoMemLimit         string `mapstructure:"GoMemLimit"`
 	GOGC               int    `mapstructure:"GOGC"`
 	AutoHY2PortForward bool   `mapstructure:"AutoHY2PortForward"`
+}
+
+type DNSConfig struct {
+	Servers []string `mapstructure:"Servers"`
 }
 
 func New() *Conf {

@@ -455,6 +455,9 @@ panel:
 kernel:
   config_dir: "/etc/v2node"
   log_level: "warning"
+  dns_servers:
+    - "1.1.1.1"
+    - "8.8.8.8"
 
 log:
   level: "warning"

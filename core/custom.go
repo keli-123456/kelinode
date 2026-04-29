@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	panel "github.com/keli-123456/kelinode/api/v2board"
+	nodeconf "github.com/keli-123456/kelinode/conf"
 	"github.com/xtls/xray-core/app/dns"
 	"github.com/xtls/xray-core/app/router"
 	xnet "github.com/xtls/xray-core/common/net"
@@ -33,6 +34,22 @@ func hasPublicIPv6() bool {
 	return false
 }
 
+func configuredDNSServers(cfg *nodeconf.Conf) []string {
+	if cfg != nil && len(cfg.DNSConfig.Servers) > 0 {
+		servers := make([]string, 0, len(cfg.DNSConfig.Servers))
+		for _, server := range cfg.DNSConfig.Servers {
+			server = strings.TrimSpace(server)
+			if server != "" {
+				servers = append(servers, server)
+			}
+		}
+		if len(servers) > 0 {
+			return servers
+		}
+	}
+	return []string{"1.1.1.1", "8.8.8.8"}
+}
+
 func hasOutboundWithTag(list []*core.OutboundHandlerConfig, tag string) bool {
 	for _, o := range list {
 		if o != nil && o.Tag == tag {
@@ -42,24 +59,26 @@ func hasOutboundWithTag(list []*core.OutboundHandlerConfig, tag string) bool {
 	return false
 }
 
-func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*core.OutboundHandlerConfig, *router.Config, error) {
+func GetCustomConfig(cfg *nodeconf.Conf, infos []*panel.NodeInfo) (*dns.Config, []*core.OutboundHandlerConfig, *router.Config, error) {
 	//dns
 	queryStrategy := "UseIPv4v6"
 	if !hasPublicIPv6() {
 		queryStrategy = "UseIPv4"
 	}
+	dnsServers := configuredDNSServers(cfg)
 	coreDnsConfig := &coreConf.DNSConfig{
-		Servers: []*coreConf.NameServerConfig{
-			{
-				Address: &coreConf.Address{
-					Address: xnet.ParseAddress("localhost"),
-				},
-			},
-		},
+		Servers: make([]*coreConf.NameServerConfig, 0, len(dnsServers)),
 		QueryStrategy: queryStrategy,
 	}
+	for _, server := range dnsServers {
+		coreDnsConfig.Servers = append(coreDnsConfig.Servers, &coreConf.NameServerConfig{
+			Address: &coreConf.Address{
+				Address: xnet.ParseAddress(server),
+			},
+		})
+	}
 	//outbound
-	defaultoutbound, _ := buildDefaultOutbound()
+	defaultoutbound, _ := buildDefaultOutbound(queryStrategy)
 	coreOutboundConfig := append([]*core.OutboundHandlerConfig{}, defaultoutbound)
 	block, _ := buildBlockOutbound()
 	coreOutboundConfig = append(coreOutboundConfig, block)

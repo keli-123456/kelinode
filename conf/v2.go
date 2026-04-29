@@ -30,9 +30,10 @@ type panelConfigV2 struct {
 }
 
 type kernelConfigV2 struct {
-	Type      string `mapstructure:"type"`
-	ConfigDir string `mapstructure:"config_dir"`
-	LogLevel  string `mapstructure:"log_level"`
+	Type       string   `mapstructure:"type"`
+	ConfigDir  string   `mapstructure:"config_dir"`
+	LogLevel   string   `mapstructure:"log_level"`
+	DNSServers []string `mapstructure:"dns_servers"`
 }
 
 type logConfigV2 struct {
@@ -147,6 +148,9 @@ func (p *Conf) loadFromV2(v *viper.Viper) error {
 		GoMemLimit:         strings.TrimSpace(cfg.Runtime.GoMemLimit),
 		GOGC:               cfg.Runtime.GOGC,
 		AutoHY2PortForward: cfg.Runtime.AutoHY2PortForward,
+	}
+	p.DNSConfig = DNSConfig{
+		Servers: normalizeStringList(cfg.Kernel.DNSServers),
 	}
 	if cfg.Realtime.Enabled != nil {
 		p.RealtimeConfig.Enabled = *cfg.Realtime.Enabled
@@ -281,6 +285,26 @@ func confZeroSSLFromV2(src zeroSSLConfigV2) ZeroSSLConfig {
 		CABundlePEM:       strings.TrimSpace(src.CABundlePEM),
 		ExpiresAt:         strings.TrimSpace(src.ExpiresAt),
 	}
+}
+
+func normalizeStringList(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	normalized := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		cleaned := strings.TrimSpace(value)
+		if cleaned == "" {
+			continue
+		}
+		if _, ok := seen[cleaned]; ok {
+			continue
+		}
+		seen[cleaned] = struct{}{}
+		normalized = append(normalized, cleaned)
+	}
+	return normalized
 }
 
 func resolveNodeConfigDir(baseDir string, override string, nodeID int, multiNode bool) string {

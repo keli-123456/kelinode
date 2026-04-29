@@ -93,7 +93,7 @@ func getCore(c *conf.Conf, infos []*panel.NodeInfo) *core.Instance {
 		ErrorLog:  c.LogConfig.Output,
 	}
 	// Custom config
-	dnsConfig, outBoundConfig, routeConfig, err := GetCustomConfig(infos)
+	dnsConfig, outBoundConfig, routeConfig, err := GetCustomConfig(c, infos)
 	if err != nil {
 		log.WithField("err", err).Panic("failed to build custom config")
 	}

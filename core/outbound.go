@@ -1,24 +1,26 @@
 package core
 
 import (
-	"fmt"
-
 	"encoding/json"
+	"fmt"
 
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/infra/conf"
 )
 
 // build default freedom outbund
-func buildDefaultOutbound() (*core.OutboundHandlerConfig, error) {
+func buildDefaultOutbound(domainStrategy string) (*core.OutboundHandlerConfig, error) {
 	outboundDetourConfig := &conf.OutboundDetourConfig{}
 	outboundDetourConfig.Protocol = "freedom"
 	outboundDetourConfig.Tag = "Default"
 	//sendthrough := "origin"
 	//outboundDetourConfig.SendThrough = &sendthrough
+	if domainStrategy == "" {
+		domainStrategy = "UseIPv4v6"
+	}
 
 	proxySetting := &conf.FreedomConfig{
-		DomainStrategy: "UseIPv4v6",
+		DomainStrategy: domainStrategy,
 	}
 	var setting json.RawMessage
 	setting, err := json.Marshal(proxySetting)
