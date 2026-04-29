@@ -1,8 +1,11 @@
 package node
 
 import (
+	"context"
+	"fmt"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 
 	panel "github.com/keli-123456/kelinode/api/v2board"
@@ -103,6 +106,60 @@ func TestParsePortForwardMatchersRejectsInvalidPorts(t *testing.T) {
 		if _, err := parsePortForwardMatchers(input); err == nil {
 			t.Fatalf("expected %q to fail", input)
 		}
+	}
+}
+
+func TestReconcilePortForwardToolUsesPortScopedJumps(t *testing.T) {
+	oldRun := runPortForwardCommand
+	oldOutput := runPortForwardCommandOutput
+	defer func() {
+		runPortForwardCommand = oldRun
+		runPortForwardCommandOutput = oldOutput
+	}()
+
+	var commands [][]string
+	runPortForwardCommand = func(_ context.Context, name string, args ...string) error {
+		commands = append(commands, append([]string{name}, args...))
+		return nil
+	}
+	runPortForwardCommandOutput = func(_ context.Context, _ string, args ...string) (string, error) {
+		if reflect.DeepEqual(args, []string{"-t", "nat", "-S", "PREROUTING"}) {
+			return strings.Join([]string{
+				"-A PREROUTING -p udp -j V2NODE-HY2",
+				"-A PREROUTING -p udp --dport 10000:10002 -j V2NODE-HY2",
+				"-A PREROUTING -p tcp -j OTHER",
+			}, "\n"), nil
+		}
+		return "", fmt.Errorf("unexpected output command: %v", args)
+	}
+
+	rules := []portForwardRule{
+		{
+			matcher:    portForwardMatcher{args: []string{"--dport", "30000:30002"}},
+			targetPort: 443,
+		},
+		{
+			matcher:    portForwardMatcher{args: []string{"-m", "multiport", "--dports", "20000,20001"}},
+			targetPort: 8443,
+		},
+	}
+
+	if err := reconcilePortForwardTool(context.Background(), "git", rules); err != nil {
+		t.Fatalf("reconcile failed: %v", err)
+	}
+
+	want := [][]string{
+		{"git", "-t", "nat", "-D", "PREROUTING", "-p", "udp", "-j", "V2NODE-HY2"},
+		{"git", "-t", "nat", "-D", "PREROUTING", "-p", "udp", "--dport", "10000:10002", "-j", "V2NODE-HY2"},
+		{"git", "-t", "nat", "-N", "V2NODE-HY2"},
+		{"git", "-t", "nat", "-F", "V2NODE-HY2"},
+		{"git", "-t", "nat", "-A", "PREROUTING", "-p", "udp", "--dport", "30000:30002", "-j", "V2NODE-HY2"},
+		{"git", "-t", "nat", "-A", "V2NODE-HY2", "-p", "udp", "--dport", "30000:30002", "-j", "REDIRECT", "--to-ports", "443"},
+		{"git", "-t", "nat", "-A", "PREROUTING", "-p", "udp", "-m", "multiport", "--dports", "20000,20001", "-j", "V2NODE-HY2"},
+		{"git", "-t", "nat", "-A", "V2NODE-HY2", "-p", "udp", "-m", "multiport", "--dports", "20000,20001", "-j", "REDIRECT", "--to-ports", "8443"},
+	}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("unexpected commands:\ngot  %#v\nwant %#v", commands, want)
 	}
 }
 

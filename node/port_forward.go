@@ -26,8 +26,12 @@ type portForwardRule struct {
 }
 
 type portForwardCommandRunner func(ctx context.Context, name string, args ...string) error
+type portForwardCommandOutputRunner func(ctx context.Context, name string, args ...string) (string, error)
 
-var runPortForwardCommand portForwardCommandRunner = defaultRunPortForwardCommand
+var (
+	runPortForwardCommand       portForwardCommandRunner       = defaultRunPortForwardCommand
+	runPortForwardCommandOutput portForwardCommandOutputRunner = defaultRunPortForwardCommandOutput
+)
 
 func reconcileHysteriaPortForward(infos []*panel.NodeInfo) {
 	rules, errs := buildHysteriaPortForwardRules(infos)
@@ -244,7 +248,7 @@ func reconcilePortForwardTool(ctx context.Context, tool string, rules []portForw
 		return nil
 	}
 
-	deletePortForwardJump(ctx, tool)
+	deletePortForwardJumps(ctx, tool)
 	if len(rules) == 0 {
 		_ = runPortForwardCommand(ctx, tool, "-t", "nat", "-F", hysteriaPortForwardChain)
 		_ = runPortForwardCommand(ctx, tool, "-t", "nat", "-X", hysteriaPortForwardChain)
@@ -255,11 +259,15 @@ func reconcilePortForwardTool(ctx context.Context, tool string, rules []portForw
 	if err := runPortForwardCommand(ctx, tool, "-t", "nat", "-F", hysteriaPortForwardChain); err != nil {
 		return err
 	}
-	if err := runPortForwardCommand(ctx, tool, "-t", "nat", "-A", "PREROUTING", "-p", "udp", "-j", hysteriaPortForwardChain); err != nil {
-		return err
-	}
 
 	for _, rule := range rules {
+		jumpArgs := []string{"-t", "nat", "-A", "PREROUTING", "-p", "udp"}
+		jumpArgs = append(jumpArgs, rule.matcher.args...)
+		jumpArgs = append(jumpArgs, "-j", hysteriaPortForwardChain)
+		if err := runPortForwardCommand(ctx, tool, jumpArgs...); err != nil {
+			return err
+		}
+
 		args := []string{"-t", "nat", "-A", hysteriaPortForwardChain, "-p", "udp"}
 		args = append(args, rule.matcher.args...)
 		args = append(args, "-j", "REDIRECT", "--to-ports", strconv.Itoa(rule.targetPort))
@@ -270,12 +278,38 @@ func reconcilePortForwardTool(ctx context.Context, tool string, rules []portForw
 	return nil
 }
 
-func deletePortForwardJump(ctx context.Context, tool string) {
+func deletePortForwardJumps(ctx context.Context, tool string) {
+	output, err := runPortForwardCommandOutput(ctx, tool, "-t", "nat", "-S", "PREROUTING")
+	if err == nil {
+		for _, line := range strings.Split(output, "\n") {
+			fields := strings.Fields(strings.TrimSpace(line))
+			if !isPortForwardJumpSpec(fields) {
+				continue
+			}
+			fields[0] = "-D"
+			args := append([]string{"-t", "nat"}, fields...)
+			_ = runPortForwardCommand(ctx, tool, args...)
+		}
+		return
+	}
+
 	for {
 		if err := runPortForwardCommand(ctx, tool, "-t", "nat", "-D", "PREROUTING", "-p", "udp", "-j", hysteriaPortForwardChain); err != nil {
 			return
 		}
 	}
+}
+
+func isPortForwardJumpSpec(fields []string) bool {
+	if len(fields) < 4 || fields[0] != "-A" || fields[1] != "PREROUTING" {
+		return false
+	}
+	for i := 2; i < len(fields)-1; i++ {
+		if fields[i] == "-j" && fields[i+1] == hysteriaPortForwardChain {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultRunPortForwardCommand(ctx context.Context, name string, args ...string) error {
@@ -289,4 +323,17 @@ func defaultRunPortForwardCommand(ctx context.Context, name string, args ...stri
 		return err
 	}
 	return fmt.Errorf("%w: %s", err, message)
+}
+
+func defaultRunPortForwardCommandOutput(ctx context.Context, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return string(output), nil
+	}
+	message := strings.TrimSpace(string(output))
+	if message == "" {
+		return "", err
+	}
+	return "", fmt.Errorf("%w: %s", err, message)
 }
