@@ -21,12 +21,13 @@ import (
 )
 
 var (
-	config           string
-	watch            bool
-	newNodeForReload = func(nodes []conf.NodeConfig, realtime conf.RealtimeConfig) (*node.Node, error) {
+	config                   string
+	watch                    bool
+	machineReconcileInterval = 5 * time.Minute
+	newNodeForReload         = func(nodes []conf.NodeConfig, realtime conf.RealtimeConfig) (*node.Node, error) {
 		return node.New(nodes, realtime)
 	}
-	newMachineNodeForReload = func(nodes []conf.NodeConfig, realtime conf.RealtimeConfig, machine conf.MachineConfig) (*node.Node, error) {
+	newMachineNodeForReload  = func(nodes []conf.NodeConfig, realtime conf.RealtimeConfig, machine conf.MachineConfig) (*node.Node, error) {
 		return node.NewMachine(nodes, realtime, node.MachineOptions{
 			ContinueOnError: machine.ContinueOnError,
 		})
@@ -217,6 +218,8 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	signal.Notify(osSignals, syscall.SIGINT, syscall.SIGTERM)
 	machineFailureRetryTicker := time.NewTicker(time.Minute)
 	defer machineFailureRetryTicker.Stop()
+	machineReconcileTicker := time.NewTicker(machineReconcileInterval)
+	defer machineReconcileTicker.Stop()
 
 	for {
 		select {
@@ -228,6 +231,8 @@ func serverHandle(_ *cobra.Command, _ []string) {
 				log.WithField("failures", len(nodes.Failures())).Info("Retrying failed machine nodes")
 				queueReload(reloadCh)
 			}
+		case <-machineReconcileTicker.C:
+			queueMachineReconcileIfEnabled(configPath, reloadCh)
 		case <-reloadCh:
 			log.Info("收到重启信号，正在重新加载配置...")
 			health.MarkReady(false)
@@ -238,6 +243,19 @@ func serverHandle(_ *cobra.Command, _ []string) {
 			log.Info("重启成功")
 		}
 	}
+}
+
+func queueMachineReconcileIfEnabled(configPath string, reloadCh chan struct{}) {
+	cfg := conf.New()
+	if err := cfg.LoadFromPath(configPath); err != nil {
+		log.WithField("err", err).Warn("Load config for periodic machine reconcile failed")
+		return
+	}
+	if !cfg.MachineConfig.Enabled {
+		return
+	}
+	log.Debug("Queueing periodic machine reconcile")
+	queueReload(reloadCh)
 }
 
 func reload(config string, nodes **node.Node, v2core **core.V2Core, health *healthState, runtimeState *runtimeTuningState) error {
