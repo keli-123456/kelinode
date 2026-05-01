@@ -62,7 +62,7 @@ func requestMachineUpgrade(command machineUpgradeCommand) {
 		StartedAt:     now,
 		UpdatedAt:     now,
 	}
-	if versionsEqual(version, command.TargetVersion) {
+	if versionsEqual(currentKelinodeVersion(), command.TargetVersion) {
 		next.Status = "succeeded"
 		next.FinishedAt = now
 		machineUpgradeState.status = next

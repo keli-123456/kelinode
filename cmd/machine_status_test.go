@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,6 +16,59 @@ import (
 	"github.com/keli-123456/kelinode/conf"
 	"github.com/keli-123456/kelinode/node"
 )
+
+func TestReportMachineStatusIncludesVersion(t *testing.T) {
+	previousVersion := version
+	version = "v9.8.7"
+	defer func() { version = previousVersion }()
+
+	var gotVersion string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Status map[string]any `json:"status"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		gotVersion, _ = payload.Status["version"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": true})
+	}))
+	defer server.Close()
+
+	_, err := reportMachineStatus(context.Background(), conf.MachineProfileConfig{
+		APIHost:   server.URL,
+		Key:       "machine-token",
+		MachineID: 1,
+		Timeout:   1,
+	}, nil, nil, map[string]any{"cpu": 1})
+	if err != nil {
+		t.Fatalf("reportMachineStatus returned error: %v", err)
+	}
+	if gotVersion != "v9.8.7" {
+		t.Fatalf("unexpected reported version: %q", gotVersion)
+	}
+}
+
+func TestCurrentKelinodeVersionFallsBackToInstalledMarker(t *testing.T) {
+	previousVersion := version
+	previousPaths := installedVersionPaths
+	defer func() {
+		version = previousVersion
+		installedVersionPaths = previousPaths
+	}()
+
+	version = "TempVersion"
+	path := filepath.Join(t.TempDir(), ".installed_version")
+	if err := os.WriteFile(path, []byte("v1.2.3\n"), 0644); err != nil {
+		t.Fatalf("write version marker: %v", err)
+	}
+	installedVersionPaths = []string{path}
+
+	if got := currentKelinodeVersion(); got != "v1.2.3" {
+		t.Fatalf("unexpected current version: %q", got)
+	}
+}
 
 func TestReportMachineStatusParsesReloadHint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

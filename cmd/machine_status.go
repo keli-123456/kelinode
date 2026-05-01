@@ -132,7 +132,7 @@ func reportMachineStatus(ctx context.Context, profile conf.MachineProfileConfig,
 		return machineStatusReportResult{}, nil
 	}
 	status := buildMachineStatusPayload(systemStatus)
-	status["version"] = version
+	status["version"] = currentKelinodeVersion()
 	if agentStatus != nil {
 		status["agent"] = map[string]any{
 			"subscription_proxy": agentStatus(),
