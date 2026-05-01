@@ -96,6 +96,9 @@ func runMachineStatusReporter(ctx context.Context, profiles []conf.MachineProfil
 				}).Info("Machine status requested config reload")
 				requestReload()
 			}
+			if result.Upgrade != nil {
+				requestMachineUpgrade(*result.Upgrade)
+			}
 		}
 	}
 	report()
@@ -113,7 +116,13 @@ func runMachineStatusReporter(ctx context.Context, profiles []conf.MachineProfil
 }
 
 type machineStatusReportResult struct {
-	Reload bool
+	Reload  bool
+	Upgrade *machineUpgradeCommand
+}
+
+type machineUpgradeCommand struct {
+	ID            string `json:"id"`
+	TargetVersion string `json:"target_version"`
 }
 
 func reportMachineStatus(ctx context.Context, profile conf.MachineProfileConfig, agentStatus func() subproxy.Status, nodeFailures []nodepkg.NodeFailure, systemStatus map[string]any) (machineStatusReportResult, error) {
@@ -129,6 +138,9 @@ func reportMachineStatus(ctx context.Context, profile conf.MachineProfileConfig,
 			"subscription_proxy": agentStatus(),
 			"hy2_port_forward":   nodepkg.GetHysteriaPortForwardStatusSnapshot(),
 		}
+	}
+	if upgradeStatus := currentMachineUpgradeStatus(); upgradeStatus != nil {
+		status["upgrade"] = upgradeStatus
 	}
 	status["node_failures"] = buildMachineNodeFailurePayload(profile, nodeFailures)
 	body, err := json.Marshal(map[string]any{
@@ -171,12 +183,13 @@ func reportMachineStatus(ctx context.Context, profile conf.MachineProfileConfig,
 		return machineStatusReportResult{}, nil
 	}
 	var payload struct {
-		Reload bool `json:"reload"`
+		Reload  bool                   `json:"reload"`
+		Upgrade *machineUpgradeCommand `json:"upgrade"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return machineStatusReportResult{}, fmt.Errorf("decode machine status response failed: %w", err)
 	}
-	return machineStatusReportResult{Reload: payload.Reload}, nil
+	return machineStatusReportResult{Reload: payload.Reload, Upgrade: payload.Upgrade}, nil
 }
 
 func buildMachineNodeFailurePayload(profile conf.MachineProfileConfig, failures []nodepkg.NodeFailure) []map[string]any {

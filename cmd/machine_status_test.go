@@ -44,6 +44,39 @@ func TestReportMachineStatusParsesReloadHint(t *testing.T) {
 	}
 }
 
+func TestReportMachineStatusParsesUpgradeCommand(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": true,
+			"upgrade": map[string]any{
+				"id":             "upgrade-1",
+				"target_version": "v1.2.3",
+			},
+		})
+	}))
+	defer server.Close()
+
+	result, err := reportMachineStatus(context.Background(), conf.MachineProfileConfig{
+		APIHost:   server.URL,
+		Key:       "machine-token",
+		MachineID: 1,
+		Timeout:   1,
+	}, nil, nil, map[string]any{"cpu": 1})
+	if err != nil {
+		t.Fatalf("reportMachineStatus returned error: %v", err)
+	}
+	if result.Upgrade == nil {
+		t.Fatalf("expected upgrade command")
+	}
+	if got := result.Upgrade.ID; got != "upgrade-1" {
+		t.Fatalf("unexpected upgrade id: %q", got)
+	}
+	if got := result.Upgrade.TargetVersion; got != "v1.2.3" {
+		t.Fatalf("unexpected target version: %q", got)
+	}
+}
+
 func TestRunMachineStatusReporterQueuesReloadHint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
