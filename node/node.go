@@ -26,6 +26,7 @@ type Node struct {
 	configs            []conf.NodeConfig
 	failures           []NodeFailure
 	autoHY2PortForward bool
+	cleanupHY2OnDisable bool
 	continueOnError    bool
 }
 
@@ -148,6 +149,12 @@ func (n *Node) SetAutoHY2PortForward(enabled bool) {
 	if n == nil {
 		return
 	}
+	if enabled {
+		n.cleanupHY2OnDisable = false
+	}
+	if n.autoHY2PortForward && !enabled {
+		n.cleanupHY2OnDisable = true
+	}
 	n.autoHY2PortForward = enabled
 }
 
@@ -157,9 +164,15 @@ func (n *Node) reconcileAutoHY2PortForward() {
 		return
 	}
 	if !n.autoHY2PortForward {
+		if n.cleanupHY2OnDisable {
+			cleanupHysteriaPortForwardRuntime()
+			n.cleanupHY2OnDisable = false
+			return
+		}
 		SetHysteriaPortForwardDisabled()
 		return
 	}
+	n.cleanupHY2OnDisable = false
 	reconcileHysteriaPortForward(n.NodeInfos)
 }
 

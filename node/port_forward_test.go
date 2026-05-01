@@ -109,6 +109,73 @@ func TestParsePortForwardMatchersRejectsInvalidPorts(t *testing.T) {
 	}
 }
 
+func TestBuildHysteriaPortForwardRulesRejectsOverlappingExternalPorts(t *testing.T) {
+	infos := []*panel.NodeInfo{
+		{
+			Id:   1,
+			Type: "hysteria2",
+			Common: &panel.CommonNode{
+				ServerPort: 443,
+				Port:       panel.PortValue("30000-30002"),
+			},
+		},
+		{
+			Id:   2,
+			Type: "hysteria2",
+			Common: &panel.CommonNode{
+				ServerPort: 8443,
+				Port:       panel.PortValue("30002-30004"),
+			},
+		},
+	}
+
+	rules, errs := buildHysteriaPortForwardRules(infos)
+	if len(errs) != 1 {
+		t.Fatalf("expected one overlap error, got %v", errs)
+	}
+	if !strings.Contains(errs[0].Error(), "overlaps node 1") {
+		t.Fatalf("unexpected overlap error: %v", errs[0])
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected only the non-conflicting rule, got %+v", rules)
+	}
+	got := append(append([]string(nil), rules[0].matcher.args...), ruleTarget(rules[0].targetPort))
+	if !reflect.DeepEqual(got, []string{"--dport", "30000:30002", "to=443"}) {
+		t.Fatalf("unexpected surviving rule: %#v", got)
+	}
+}
+
+func TestBuildHysteriaPortForwardRulesRejectsExternalPortOverServerPort(t *testing.T) {
+	infos := []*panel.NodeInfo{
+		{
+			Id:   1,
+			Type: "hysteria2",
+			Common: &panel.CommonNode{
+				ServerPort: 443,
+			},
+		},
+		{
+			Id:   2,
+			Type: "hysteria2",
+			Common: &panel.CommonNode{
+				ServerPort: 8443,
+				Port:       panel.PortValue("440-445"),
+			},
+		},
+	}
+
+	rules, errs := buildHysteriaPortForwardRules(infos)
+	if len(errs) != 1 {
+		t.Fatalf("expected one server_port overlap error, got %v", errs)
+	}
+	if !strings.Contains(errs[0].Error(), "server_port") {
+		t.Fatalf("unexpected overlap error: %v", errs[0])
+	}
+	if len(rules) != 0 {
+		t.Fatalf("expected conflicting redirect to be skipped, got %+v", rules)
+	}
+}
+
 func TestReconcilePortForwardToolUsesDirectRedirectRules(t *testing.T) {
 	oldRun := runPortForwardCommand
 	oldOutput := runPortForwardCommandOutput
@@ -205,6 +272,27 @@ func TestInspectPortForwardToolDetectsDrift(t *testing.T) {
 	}
 	if len(status.Extra) != 1 || !strings.Contains(status.Extra[0], "V2NODE-HY2") {
 		t.Fatalf("unexpected extra rules: %+v", status.Extra)
+	}
+}
+
+func TestDisableAutoHY2PortForwardCleansExistingRulesOnce(t *testing.T) {
+	oldCleanup := cleanupHysteriaPortForwardRuntime
+	defer func() {
+		cleanupHysteriaPortForwardRuntime = oldCleanup
+	}()
+
+	cleanupCalls := 0
+	cleanupHysteriaPortForwardRuntime = func() {
+		cleanupCalls++
+	}
+
+	n := &Node{autoHY2PortForward: true}
+	n.SetAutoHY2PortForward(false)
+	n.reconcileAutoHY2PortForward()
+	n.reconcileAutoHY2PortForward()
+
+	if cleanupCalls != 1 {
+		t.Fatalf("expected cleanup to run once, got %d", cleanupCalls)
 	}
 }
 

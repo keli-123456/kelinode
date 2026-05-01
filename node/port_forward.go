@@ -25,6 +25,17 @@ type portForwardRule struct {
 	targetPort int
 }
 
+type portForwardRange struct {
+	start int
+	end   int
+}
+
+type allocatedPortForwardRange struct {
+	nodeID     int
+	targetPort int
+	rng        portForwardRange
+}
+
 type portForwardCommandRunner func(ctx context.Context, name string, args ...string) error
 type portForwardCommandOutputRunner func(ctx context.Context, name string, args ...string) (string, error)
 
@@ -57,10 +68,39 @@ func reconcileHysteriaPortForward(infos []*panel.NodeInfo) {
 	}
 }
 
+var cleanupHysteriaPortForwardRuntime = cleanupHysteriaPortForward
+
+func cleanupHysteriaPortForward() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	status := CleanupHysteriaPortForward(ctx)
+	for _, err := range status.Errors {
+		log.WithField("err", err).Warn("HY2 port forwarding cleanup warning")
+	}
+	for _, toolStatus := range status.Tools {
+		if toolStatus.Error == "" {
+			continue
+		}
+		entry := log.WithFields(log.Fields{
+			"tool":  toolStatus.Tool,
+			"chain": hysteriaPortForwardChain,
+			"err":   toolStatus.Error,
+		})
+		if toolStatus.Tool == "ip6tables" {
+			entry.Debug("Failed to clean up HY2 IPv6 port forwarding")
+			continue
+		}
+		entry.Warn("Failed to clean up HY2 port forwarding")
+	}
+}
+
 func buildHysteriaPortForwardRules(infos []*panel.NodeInfo) ([]portForwardRule, []error) {
 	rules := make([]portForwardRule, 0)
 	errs := make([]error, 0)
 	seen := make(map[string]struct{})
+	allocated := make([]allocatedPortForwardRange, 0)
+	targetPorts := collectHysteriaTargetPorts(infos)
 
 	for _, info := range infos {
 		if info == nil || info.Common == nil || !isHysteriaNode(info.Type) {
@@ -80,10 +120,37 @@ func buildHysteriaPortForwardRules(infos []*panel.NodeInfo) ([]portForwardRule, 
 			continue
 		}
 
-		matchers, err := parsePortForwardMatchersExcept(externalPort, targetPort)
+		matchers, ranges, err := parsePortForwardMatchersAndRangesExcept(externalPort, targetPort)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("node %d has invalid port %q: %w", info.Id, externalPort, err))
 			continue
+		}
+		if conflictPort, ok := findPortForwardTargetPortConflict(ranges, targetPort, targetPorts); ok {
+			errs = append(errs, fmt.Errorf(
+				"node %d port %q overlaps server_port %d from another HY2 node",
+				info.Id,
+				externalPort,
+				conflictPort,
+			))
+			continue
+		}
+		if conflict := findPortForwardRangeConflict(ranges, targetPort, allocated); conflict != nil {
+			errs = append(errs, fmt.Errorf(
+				"node %d port %q overlaps node %d port %d-%d with different target server_port",
+				info.Id,
+				externalPort,
+				conflict.nodeID,
+				conflict.rng.start,
+				conflict.rng.end,
+			))
+			continue
+		}
+		for _, rng := range ranges {
+			allocated = append(allocated, allocatedPortForwardRange{
+				nodeID:     info.Id,
+				targetPort: targetPort,
+				rng:        rng,
+			})
 		}
 		for _, matcher := range matchers {
 			key := strconv.Itoa(targetPort) + "|" + strings.Join(matcher.args, "\x00")
@@ -101,6 +168,57 @@ func buildHysteriaPortForwardRules(infos []*panel.NodeInfo) ([]portForwardRule, 
 	return rules, errs
 }
 
+func collectHysteriaTargetPorts(infos []*panel.NodeInfo) map[int]struct{} {
+	targets := make(map[int]struct{})
+	for _, info := range infos {
+		if info == nil || info.Common == nil || !isHysteriaNode(info.Type) {
+			continue
+		}
+		targetPort := info.Common.ServerPort
+		if targetPort <= 0 || targetPort > 65535 {
+			continue
+		}
+		targets[targetPort] = struct{}{}
+	}
+	return targets
+}
+
+func findPortForwardTargetPortConflict(ranges []portForwardRange, targetPort int, targetPorts map[int]struct{}) (int, bool) {
+	for port := range targetPorts {
+		if port == targetPort {
+			continue
+		}
+		for _, candidate := range ranges {
+			if candidate.contains(port) {
+				return port, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func findPortForwardRangeConflict(ranges []portForwardRange, targetPort int, allocated []allocatedPortForwardRange) *allocatedPortForwardRange {
+	for _, candidate := range ranges {
+		for i := range allocated {
+			if allocated[i].targetPort == targetPort {
+				continue
+			}
+			if candidate.overlaps(allocated[i].rng) {
+				return &allocated[i]
+			}
+		}
+	}
+	return nil
+}
+
+func (r portForwardRange) overlaps(other portForwardRange) bool {
+	return r.start <= other.end && other.start <= r.end
+}
+
+func (r portForwardRange) contains(port int) bool {
+	return r.start <= port && port <= r.end
+}
+
 func isHysteriaNode(nodeType string) bool {
 	switch strings.ToLower(strings.TrimSpace(nodeType)) {
 	case "hysteria", "hysteria2":
@@ -115,13 +233,19 @@ func parsePortForwardMatchers(raw string) ([]portForwardMatcher, error) {
 }
 
 func parsePortForwardMatchersExcept(raw string, excludedPort int) ([]portForwardMatcher, error) {
+	matchers, _, err := parsePortForwardMatchersAndRangesExcept(raw, excludedPort)
+	return matchers, err
+}
+
+func parsePortForwardMatchersAndRangesExcept(raw string, excludedPort int) ([]portForwardMatcher, []portForwardRange, error) {
 	cleaned := strings.ReplaceAll(strings.TrimSpace(raw), " ", "")
 	if cleaned == "" {
-		return nil, fmt.Errorf("empty port")
+		return nil, nil, fmt.Errorf("empty port")
 	}
 
 	tokens := strings.Split(cleaned, ",")
 	matchers := make([]portForwardMatcher, 0, len(tokens))
+	ranges := make([]portForwardRange, 0, len(tokens))
 	singles := make([]string, 0, 15)
 
 	addSingle := func(port int) {
@@ -129,6 +253,7 @@ func parsePortForwardMatchersExcept(raw string, excludedPort int) ([]portForward
 			return
 		}
 		singles = append(singles, strconv.Itoa(port))
+		ranges = append(ranges, portForwardRange{start: port, end: port})
 	}
 
 	flushSingles := func() {
@@ -154,32 +279,32 @@ func parsePortForwardMatchersExcept(raw string, excludedPort int) ([]portForward
 	}
 
 	addRange := func(start, end int) {
+		appendRange := func(rangeStart, rangeEnd int) {
+			ranges = append(ranges, portForwardRange{start: rangeStart, end: rangeEnd})
+			matchers = append(matchers, portForwardMatcher{
+				args: []string{"--dport", fmt.Sprintf("%d:%d", rangeStart, rangeEnd)},
+			})
+		}
 		if excludedPort > 0 && start <= excludedPort && excludedPort <= end {
 			if start <= excludedPort-1 {
-				matchers = append(matchers, portForwardMatcher{
-					args: []string{"--dport", fmt.Sprintf("%d:%d", start, excludedPort-1)},
-				})
+				appendRange(start, excludedPort-1)
 			}
 			if excludedPort+1 <= end {
-				matchers = append(matchers, portForwardMatcher{
-					args: []string{"--dport", fmt.Sprintf("%d:%d", excludedPort+1, end)},
-				})
+				appendRange(excludedPort+1, end)
 			}
 			return
 		}
-		matchers = append(matchers, portForwardMatcher{
-			args: []string{"--dport", fmt.Sprintf("%d:%d", start, end)},
-		})
+		appendRange(start, end)
 	}
 
 	for _, token := range tokens {
 		if token == "" {
-			return nil, fmt.Errorf("empty token")
+			return nil, nil, fmt.Errorf("empty token")
 		}
 		if strings.ContainsAny(token, "-:") {
 			start, end, err := parsePortRange(token)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if start == end {
 				addSingle(start)
@@ -191,13 +316,13 @@ func parsePortForwardMatchersExcept(raw string, excludedPort int) ([]portForward
 		}
 		port, err := parsePortNumber(token)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		addSingle(port)
 	}
 	flushSingles()
 
-	return matchers, nil
+	return matchers, ranges, nil
 }
 
 func parsePortRange(token string) (int, int, error) {
