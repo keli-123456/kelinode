@@ -70,8 +70,7 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 				log.WithField("tag", c.tag).Infof("Report %d users traffic", len(userTraffic))
 			}
 			if onlineDevice != nil && len(*onlineDevice) > 0 {
-				c.limiter.CommitOnlineDeviceReport(*onlineDevice)
-				log.WithField("tag", c.tag).Infof("Total %d online users, %d Reported", len(*onlineDevice), len(onlineResult))
+				c.commitReportedOnlineDevices(onlineDevice, onlineResult)
 			} else if !hadTraffic {
 				log.WithField("tag", c.tag).Info("No traffic or online activity to report")
 			}
@@ -108,8 +107,7 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 				"err": err,
 			}).Error("Report online users failed")
 		} else if onlineDevice != nil {
-			c.limiter.CommitOnlineDeviceReport(*onlineDevice)
-			log.WithField("tag", c.tag).Infof("Total %d online users, %d Reported", len(*onlineDevice), len(onlineResult))
+			c.commitReportedOnlineDevices(onlineDevice, onlineResult)
 			//log.WithField("tag", c.tag).Debugf("Online users: %+v", onlineData)
 		}
 	} else if !hadTraffic {
@@ -118,6 +116,19 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 
 	userTraffic = nil
 	return nil
+}
+
+func (c *Controller) commitReportedOnlineDevices(onlineDevice *[]panel.OnlineUser, onlineResult []panel.OnlineUser) {
+	if len(onlineResult) == 0 {
+		return
+	}
+
+	c.limiter.CommitOnlineDeviceReport(onlineResult)
+	total := len(onlineResult)
+	if onlineDevice != nil {
+		total = len(*onlineDevice)
+	}
+	log.WithField("tag", c.tag).Infof("Total %d online users, %d Reported", total, len(onlineResult))
 }
 
 func compareUserList(old, new []panel.UserInfo) (deleted, added, updated []panel.UserInfo) {
