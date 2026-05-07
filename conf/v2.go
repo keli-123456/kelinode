@@ -16,6 +16,7 @@ type configV2 struct {
 	Realtime realtimeConfigV2 `mapstructure:"realtime"`
 	Machine  machineConfigV2  `mapstructure:"machine"`
 	Agent    agentConfigV2    `mapstructure:"agent"`
+	Edge     edgeConfigV2     `mapstructure:"edge"`
 	Health   int              `mapstructure:"health_port"`
 	Pprof    int              `mapstructure:"pprof_port"`
 	Nodes    []nodeConfigV2   `mapstructure:"nodes"`
@@ -75,6 +76,12 @@ type agentConfigV2 struct {
 	SubscriptionProxy subscriptionProxyConfigV2 `mapstructure:"subscription_proxy"`
 }
 
+type edgeConfigV2 struct {
+	Enabled bool   `mapstructure:"enabled"`
+	URL     string `mapstructure:"url"`
+	Timeout int    `mapstructure:"timeout"`
+}
+
 type subscriptionProxyConfigV2 struct {
 	Enabled           bool                         `mapstructure:"enabled"`
 	HTTPSListen       string                       `mapstructure:"https_listen"`
@@ -121,7 +128,7 @@ func isConfigV2(v *viper.Viper) bool {
 	if v == nil {
 		return false
 	}
-	return v.IsSet("panel") || v.IsSet("kernel") || v.IsSet("runtime") || v.IsSet("health_port") || v.IsSet("machine")
+	return v.IsSet("panel") || v.IsSet("kernel") || v.IsSet("runtime") || v.IsSet("health_port") || v.IsSet("machine") || v.IsSet("edge")
 }
 
 func (p *Conf) loadFromV2(v *viper.Viper) error {
@@ -203,6 +210,11 @@ func (p *Conf) loadFromV2(v *viper.Viper) error {
 	}
 	p.MachineConfig.Profiles = machineProfiles
 	p.AgentConfig.SubscriptionProxy = subscriptionProxyFromV2(cfg.Agent.SubscriptionProxy)
+	p.EdgeConfig = EdgeConfig{
+		Enabled: cfg.Edge.Enabled,
+		URL:     strings.TrimSpace(cfg.Edge.URL),
+		Timeout: cfg.Edge.Timeout,
+	}
 
 	if len(cfg.Nodes) == 0 {
 		if len(machineProfiles) > 0 {

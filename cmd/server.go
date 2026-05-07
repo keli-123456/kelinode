@@ -77,6 +77,9 @@ var (
 		machineRealtimeReporter.Apply(machine, realtime, requestReload)
 	}
 	closeMachineRealtimeForReload = func() { machineRealtimeReporter.Close() }
+	edgeControl                 = newEdgeControlState()
+	applyEdgeForReload          = func(cfg conf.EdgeConfig) { edgeControl.Apply(cfg) }
+	reloadEdgeForReload         = func() { edgeControl.Reload(context.Background()) }
 )
 
 var serverCommand = cobra.Command{
@@ -145,6 +148,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	applySubscriptionProxy(c.AgentConfig.SubscriptionProxy)
 	applyMachineStatusForReload(c.MachineConfig, requestReload, nodeFailures)
 	applyMachineRealtimeForReload(c.MachineConfig, c.RealtimeConfig, requestReload)
+	applyEdgeForReload(c.EdgeConfig)
 	defer func() {
 		closeMachineRealtimeForReload()
 		closeMachineStatusForReload()
@@ -310,6 +314,7 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core, health *heal
 		return (*nodes).Failures()
 	})
 	applyMachineRealtimeForReload(newConf.MachineConfig, newConf.RealtimeConfig, func() { queueReload(oldReloadCh) })
+	applyEdgeForReload(newConf.EdgeConfig)
 	appliedRuntime := applyRuntimeSettings(newConf.RuntimeConfig, runtimeState)
 
 	if newConf.MachineConfig.Enabled && *nodes != nil && *v2core != nil {
@@ -328,6 +333,7 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core, health *heal
 			if health != nil {
 				health.UpdateConfig(newConf, appliedRuntime)
 			}
+			reloadEdgeForReload()
 			runtime.GC()
 			return nil
 		}
@@ -364,6 +370,7 @@ func reload(config string, nodes **node.Node, v2core **core.V2Core, health *heal
 	if health != nil {
 		health.UpdateConfig(newConf, appliedRuntime)
 	}
+	reloadEdgeForReload()
 
 	runtime.GC()
 	return nil

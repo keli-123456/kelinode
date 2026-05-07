@@ -9,6 +9,7 @@ import (
 )
 
 const DefaultNodeConfigDir = "/etc/v2node"
+const DefaultEdgeURL = "http://127.0.0.1:17990"
 
 type Conf struct {
 	LogConfig      LogConfig      `mapstructure:"Log"`
@@ -20,6 +21,7 @@ type Conf struct {
 	HealthPort     int            `mapstructure:"HealthPort"`
 	RuntimeConfig  RuntimeConfig  `mapstructure:"Runtime"`
 	RealtimeConfig RealtimeConfig `mapstructure:"Realtime"`
+	EdgeConfig     EdgeConfig     `mapstructure:"Edge"`
 }
 
 type LogConfig struct {
@@ -109,6 +111,12 @@ type RuntimeConfig struct {
 	AutoHY2PortForward bool   `mapstructure:"AutoHY2PortForward"`
 }
 
+type EdgeConfig struct {
+	Enabled bool   `mapstructure:"Enabled"`
+	URL     string `mapstructure:"URL"`
+	Timeout int    `mapstructure:"Timeout"`
+}
+
 type DNSConfig struct {
 	Servers       []string `mapstructure:"Servers"`
 	QueryStrategy string   `mapstructure:"QueryStrategy"`
@@ -127,6 +135,11 @@ func New() *Conf {
 			GoMemLimit:         "",
 			GOGC:               0,
 			AutoHY2PortForward: false,
+		},
+		EdgeConfig: EdgeConfig{
+			Enabled: false,
+			URL:     DefaultEdgeURL,
+			Timeout: 2,
 		},
 	}
 }
@@ -148,6 +161,7 @@ func (p *Conf) LoadFromPath(filePath string) error {
 		}
 		normalizeNodeConfigs(p.NodeConfigs)
 		normalizeMachineProfiles(p.MachineConfig.Profiles)
+		normalizeEdgeConfig(&p.EdgeConfig)
 		return nil
 	}
 	if err := v.Unmarshal(p); err != nil {
@@ -155,6 +169,7 @@ func (p *Conf) LoadFromPath(filePath string) error {
 	}
 	normalizeNodeConfigs(p.NodeConfigs)
 	normalizeMachineProfiles(p.MachineConfig.Profiles)
+	normalizeEdgeConfig(&p.EdgeConfig)
 	return nil
 }
 
@@ -195,6 +210,18 @@ func normalizeMachineProfiles(profiles []MachineProfileConfig) {
 		if profiles[i].ConfigDir != "" {
 			profiles[i].ConfigDir = NormalizeConfigDir(profiles[i].ConfigDir)
 		}
+	}
+}
+
+func normalizeEdgeConfig(edge *EdgeConfig) {
+	if edge == nil {
+		return
+	}
+	if edge.URL == "" {
+		edge.URL = DefaultEdgeURL
+	}
+	if edge.Timeout <= 0 {
+		edge.Timeout = 2
 	}
 }
 

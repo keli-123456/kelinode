@@ -30,6 +30,10 @@ runtime:
   gomemlimit: "256MiB"
   gogc: 120
   auto_hy2_port_forward: true
+edge:
+  enabled: true
+  url: "http://127.0.0.1:17990"
+  timeout: 5
 health_port: 65530
 realtime:
   enabled: true
@@ -60,6 +64,9 @@ realtime:
 	}
 	if cfg.RuntimeConfig.GoMemLimit != "256MiB" || cfg.RuntimeConfig.GOGC != 120 || !cfg.RuntimeConfig.AutoHY2PortForward {
 		t.Fatalf("unexpected runtime config: %+v", cfg.RuntimeConfig)
+	}
+	if !cfg.EdgeConfig.Enabled || cfg.EdgeConfig.URL != "http://127.0.0.1:17990" || cfg.EdgeConfig.Timeout != 5 {
+		t.Fatalf("unexpected edge config: %+v", cfg.EdgeConfig)
 	}
 	if len(cfg.NodeConfigs) != 1 {
 		t.Fatalf("unexpected node count: %d", len(cfg.NodeConfigs))

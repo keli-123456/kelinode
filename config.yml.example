@@ -24,6 +24,13 @@ runtime:
   # external port ranges. Use `v2node rules status` to inspect them.
   auto_hy2_port_forward: false
 
+edge:
+  # Experimental local Rust data-plane / sidecar supervisor.
+  # Keep disabled until keli-edge is deployed on the same machine.
+  enabled: false
+  url: "http://127.0.0.1:17990"
+  timeout: 2
+
 health_port: 65530
 pprof_port: 0
 
