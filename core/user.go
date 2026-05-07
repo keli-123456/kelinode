@@ -17,9 +17,11 @@ import (
 	"github.com/xtls/xray-core/infra/conf"
 	"github.com/xtls/xray-core/proxy"
 	"github.com/xtls/xray-core/proxy/anytls"
+	httpproxy "github.com/xtls/xray-core/proxy/http"
 	hyaccount "github.com/xtls/xray-core/proxy/hysteria/account"
 	"github.com/xtls/xray-core/proxy/shadowsocks"
 	"github.com/xtls/xray-core/proxy/shadowsocks_2022"
+	socksproxy "github.com/xtls/xray-core/proxy/socks"
 	"github.com/xtls/xray-core/proxy/trojan"
 	"github.com/xtls/xray-core/proxy/tuic"
 	"github.com/xtls/xray-core/proxy/vless"
@@ -191,6 +193,10 @@ func (v *V2Core) AddUsersWithContext(ctx context.Context, p *AddUsersParams) (ad
 			p.Users,
 			p.Common.Cipher,
 			p.Common.ServerKey)
+	case "socks":
+		users = buildSocksUsers(p.Tag, p.Users)
+	case "http":
+		users = buildHTTPUsers(p.Tag, p.Users)
 	case "hysteria2":
 		users = buildHysteria2Users(p.Tag, p.Users)
 	case "tuic":
@@ -368,6 +374,46 @@ func getCipherFromString(c string) shadowsocks.CipherType {
 		return shadowsocks.CipherType_NONE
 	default:
 		return shadowsocks.CipherType_UNKNOWN
+	}
+}
+
+func buildSocksUsers(tag string, userInfo []panel.UserInfo) (users []*protocol.User) {
+	users = make([]*protocol.User, len(userInfo))
+	for i := range userInfo {
+		users[i] = buildSocksUser(tag, &userInfo[i])
+	}
+	return users
+}
+
+func buildSocksUser(tag string, userInfo *panel.UserInfo) (user *protocol.User) {
+	socksAccount := &socksproxy.Account{
+		Username: userInfo.Uuid,
+		Password: userInfo.Uuid,
+	}
+	return &protocol.User{
+		Level:   0,
+		Email:   format.UserTag(tag, userInfo.Uuid),
+		Account: serial.ToTypedMessage(socksAccount),
+	}
+}
+
+func buildHTTPUsers(tag string, userInfo []panel.UserInfo) (users []*protocol.User) {
+	users = make([]*protocol.User, len(userInfo))
+	for i := range userInfo {
+		users[i] = buildHTTPUser(tag, &userInfo[i])
+	}
+	return users
+}
+
+func buildHTTPUser(tag string, userInfo *panel.UserInfo) (user *protocol.User) {
+	httpAccount := &httpproxy.Account{
+		Username: userInfo.Uuid,
+		Password: userInfo.Uuid,
+	}
+	return &protocol.User{
+		Level:   0,
+		Email:   format.UserTag(tag, userInfo.Uuid),
+		Account: serial.ToTypedMessage(httpAccount),
 	}
 }
 

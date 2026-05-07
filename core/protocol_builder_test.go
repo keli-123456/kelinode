@@ -17,8 +17,10 @@ import (
 	"github.com/xtls/xray-core/app/proxyman"
 	coreConf "github.com/xtls/xray-core/infra/conf"
 	"github.com/xtls/xray-core/proxy/anytls"
+	httpproxy "github.com/xtls/xray-core/proxy/http"
 	hyproxy "github.com/xtls/xray-core/proxy/hysteria"
 	hyaccount "github.com/xtls/xray-core/proxy/hysteria/account"
+	socksproxy "github.com/xtls/xray-core/proxy/socks"
 	"github.com/xtls/xray-core/proxy/tuic"
 	hytransport "github.com/xtls/xray-core/transport/internet/hysteria"
 	tlscfg "github.com/xtls/xray-core/transport/internet/tls"
@@ -202,6 +204,54 @@ func TestBuildAnyTLSConfigWithWebSocket(t *testing.T) {
 	}
 }
 
+func TestBuildSocksConfigRequiresAuthAndUDP(t *testing.T) {
+	t.Parallel()
+
+	inbound := &coreConf.InboundDetourConfig{}
+	if err := buildSocks(&panel.NodeInfo{Type: "socks", Common: &panel.CommonNode{}}, inbound); err != nil {
+		t.Fatalf("build socks inbound failed: %v", err)
+	}
+
+	if got, want := inbound.Protocol, "socks"; got != want {
+		t.Fatalf("unexpected protocol: got %q want %q", got, want)
+	}
+
+	var settings coreConf.SocksServerConfig
+	if err := json.Unmarshal(*inbound.Settings, &settings); err != nil {
+		t.Fatalf("unmarshal socks settings failed: %v", err)
+	}
+	if got, want := settings.AuthMethod, coreConf.AuthMethodUserPass; got != want {
+		t.Fatalf("unexpected auth method: got %q want %q", got, want)
+	}
+	if !settings.UDP {
+		t.Fatalf("expected socks udp to be enabled")
+	}
+}
+
+func TestBuildHTTPConfigRequiresDynamicAuth(t *testing.T) {
+	t.Parallel()
+
+	inbound := &coreConf.InboundDetourConfig{}
+	if err := buildHTTP(&panel.NodeInfo{Type: "http", Common: &panel.CommonNode{}}, inbound); err != nil {
+		t.Fatalf("build http inbound failed: %v", err)
+	}
+
+	if got, want := inbound.Protocol, "http"; got != want {
+		t.Fatalf("unexpected protocol: got %q want %q", got, want)
+	}
+
+	var settings coreConf.HTTPServerConfig
+	if err := json.Unmarshal(*inbound.Settings, &settings); err != nil {
+		t.Fatalf("unmarshal http settings failed: %v", err)
+	}
+	if len(settings.Accounts) != 1 {
+		t.Fatalf("expected auth guard account, got %d accounts", len(settings.Accounts))
+	}
+	if settings.Accounts[0].Username == "" || settings.Accounts[0].Password == "" {
+		t.Fatalf("expected auth guard account credentials")
+	}
+}
+
 func TestResolveNodeListenIPDefaultsWildcardToDualStack(t *testing.T) {
 	t.Parallel()
 
@@ -330,6 +380,56 @@ func TestBuildAnyTLSUserAccount(t *testing.T) {
 	}
 	if got, want := account.Password, "anytls-user"; got != want {
 		t.Fatalf("unexpected anytls password: got %q want %q", got, want)
+	}
+}
+
+func TestBuildSocksUserAccount(t *testing.T) {
+	t.Parallel()
+
+	userInfo := &panel.UserInfo{Uuid: "socks-user"}
+	user := buildSocksUser("node-tag", userInfo)
+
+	if got, want := user.Email, format.UserTag("node-tag", "socks-user"); got != want {
+		t.Fatalf("unexpected user email: got %q want %q", got, want)
+	}
+	instance, err := user.Account.GetInstance()
+	if err != nil {
+		t.Fatalf("decode typed account failed: %v", err)
+	}
+	account, ok := instance.(*socksproxy.Account)
+	if !ok {
+		t.Fatalf("unexpected socks account type: %T", instance)
+	}
+	if got, want := account.Username, "socks-user"; got != want {
+		t.Fatalf("unexpected socks username: got %q want %q", got, want)
+	}
+	if got, want := account.Password, "socks-user"; got != want {
+		t.Fatalf("unexpected socks password: got %q want %q", got, want)
+	}
+}
+
+func TestBuildHTTPUserAccount(t *testing.T) {
+	t.Parallel()
+
+	userInfo := &panel.UserInfo{Uuid: "http-user"}
+	user := buildHTTPUser("node-tag", userInfo)
+
+	if got, want := user.Email, format.UserTag("node-tag", "http-user"); got != want {
+		t.Fatalf("unexpected user email: got %q want %q", got, want)
+	}
+	instance, err := user.Account.GetInstance()
+	if err != nil {
+		t.Fatalf("decode typed account failed: %v", err)
+	}
+	account, ok := instance.(*httpproxy.Account)
+	if !ok {
+		t.Fatalf("unexpected http account type: %T", instance)
+	}
+	if got, want := account.Username, "http-user"; got != want {
+		t.Fatalf("unexpected http username: got %q want %q", got, want)
+	}
+	if got, want := account.Password, "http-user"; got != want {
+		t.Fatalf("unexpected http password: got %q want %q", got, want)
 	}
 }
 

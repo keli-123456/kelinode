@@ -64,6 +64,10 @@ func buildInboundWithListenIP(nodeInfo *panel.NodeInfo, tag string, listenIP str
 		err = buildTrojan(nodeInfo, in)
 	case "shadowsocks":
 		err = buildShadowsocks(nodeInfo, in)
+	case "socks":
+		err = buildSocks(nodeInfo, in)
+	case "http":
+		err = buildHTTP(nodeInfo, in)
 	case "hysteria2":
 		err = buildHysteria2(nodeInfo, in)
 	case "tuic":
@@ -473,6 +477,50 @@ func buildShadowsocks(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourC
 		return fmt.Errorf("marshal shadowsocks settings error: %s", err)
 	}
 	return nil
+}
+
+func buildSocks(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourConfig) error {
+	inbound.Protocol = "socks"
+	settings := &coreConf.SocksServerConfig{
+		AuthMethod: coreConf.AuthMethodUserPass,
+		Accounts:   []*coreConf.SocksAccount{},
+		UDP:        true,
+	}
+
+	sets, err := json.Marshal(settings)
+	inbound.Settings = (*json.RawMessage)(&sets)
+	if err != nil {
+		return fmt.Errorf("marshal socks settings error: %s", err)
+	}
+	return nil
+}
+
+func buildHTTP(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourConfig) error {
+	inbound.Protocol = "http"
+	authGuard := dynamicAuthGuard()
+	settings := &coreConf.HTTPServerConfig{
+		Accounts: []*coreConf.HTTPAccount{
+			{
+				Username: authGuard,
+				Password: authGuard,
+			},
+		},
+	}
+
+	sets, err := json.Marshal(settings)
+	inbound.Settings = (*json.RawMessage)(&sets)
+	if err != nil {
+		return fmt.Errorf("marshal http settings error: %s", err)
+	}
+	return nil
+}
+
+func dynamicAuthGuard() string {
+	token := make([]byte, 32)
+	if _, err := rand.Read(token); err == nil {
+		return "__keli_dynamic_http_" + base64.RawURLEncoding.EncodeToString(token)
+	}
+	return "__keli_dynamic_http_" + strconv.FormatInt(time.Now().UnixNano(), 36)
 }
 
 func buildHysteria2(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourConfig) error {

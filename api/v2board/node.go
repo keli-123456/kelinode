@@ -200,7 +200,7 @@ func (c *Client) GetNodeInfo(ctx context.Context) (node *NodeInfo, err error) {
 		c.nodeEtag = etag
 	}
 	switch cm.Protocol {
-	case "vmess", "trojan", "hysteria2", "tuic", "anytls", "vless":
+	case "vmess", "trojan", "hysteria2", "tuic", "anytls", "vless", "socks", "http":
 		node.Type = cm.Protocol
 		node.Security = cm.Tls
 	case "shadowsocks":
