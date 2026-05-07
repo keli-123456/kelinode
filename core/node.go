@@ -20,6 +20,18 @@ func (v *V2Core) AddNode(tag string, info *panel.NodeInfo) error {
 	}
 	err = v.addInbound(inBoundConfig)
 	if err != nil {
+		if shouldFallbackNodeListenIP(info.Common.ListenIP) {
+			_ = v.removeInbound(tag)
+			ipv4Config, buildErr := buildInboundWithListenIP(info, tag, "0.0.0.0")
+			if buildErr != nil {
+				return fmt.Errorf("build ipv4 fallback inbound error: %s", buildErr)
+			}
+			if fallbackErr := v.addInbound(ipv4Config); fallbackErr == nil {
+				return nil
+			} else {
+				return fmt.Errorf("add inbound error: %s; ipv4 fallback error: %s", err, fallbackErr)
+			}
+		}
 		return fmt.Errorf("add inbound error: %s", err)
 	}
 	return nil

@@ -202,6 +202,68 @@ func TestBuildAnyTLSConfigWithWebSocket(t *testing.T) {
 	}
 }
 
+func TestResolveNodeListenIPDefaultsWildcardToDualStack(t *testing.T) {
+	t.Parallel()
+
+	got := resolveNodeListenIP("0.0.0.0")
+	if got != "::" {
+		t.Fatalf("unexpected listen ip: got %q want %q", got, "::")
+	}
+}
+
+func TestResolveNodeListenIPDefaultsBlankToDualStack(t *testing.T) {
+	t.Parallel()
+
+	got := resolveNodeListenIP("  ")
+	if got != "::" {
+		t.Fatalf("unexpected listen ip: got %q want %q", got, "::")
+	}
+}
+
+func TestResolveNodeListenIPKeepsExplicitAddress(t *testing.T) {
+	t.Parallel()
+
+	got := resolveNodeListenIP("127.0.0.1")
+	if got != "127.0.0.1" {
+		t.Fatalf("unexpected listen ip: got %q want %q", got, "127.0.0.1")
+	}
+}
+
+func TestResolveNodeListenIPTrimsBracketedIPv6Address(t *testing.T) {
+	t.Parallel()
+
+	got := resolveNodeListenIP("[::]")
+	if got != "::" {
+		t.Fatalf("unexpected listen ip: got %q want %q", got, "::")
+	}
+}
+
+func TestShouldFallbackNodeListenIPOnlyForWildcardListeners(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{name: "blank", raw: "", want: true},
+		{name: "ipv4 wildcard", raw: "0.0.0.0", want: true},
+		{name: "ipv6 wildcard", raw: "::", want: true},
+		{name: "bracketed ipv6 wildcard", raw: "[::]", want: true},
+		{name: "specific ipv4", raw: "127.0.0.1", want: false},
+		{name: "specific ipv6", raw: "2001:db8::1", want: false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := shouldFallbackNodeListenIP(tc.raw); got != tc.want {
+				t.Fatalf("unexpected fallback decision for %q: got %v want %v", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBuildHysteria2UserAccount(t *testing.T) {
 	t.Parallel()
 

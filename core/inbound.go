@@ -47,8 +47,12 @@ func (v *V2Core) addInbound(config *core.InboundHandlerConfig) error {
 	return nil
 }
 
-// BuildInbound build Inbound config for different protocol
 func buildInbound(nodeInfo *panel.NodeInfo, tag string) (*core.InboundHandlerConfig, error) {
+	return buildInboundWithListenIP(nodeInfo, tag, resolveNodeListenIP(nodeInfo.Common.ListenIP))
+}
+
+// buildInboundWithListenIP builds an inbound config for different protocols.
+func buildInboundWithListenIP(nodeInfo *panel.NodeInfo, tag string, listenIP string) (*core.InboundHandlerConfig, error) {
 	in := &coreConf.InboundDetourConfig{}
 	var err error
 	switch nodeInfo.Type {
@@ -104,7 +108,7 @@ func buildInbound(nodeInfo *panel.NodeInfo, tag string) (*core.InboundHandlerCon
 			}},
 	}
 	// Set Listen IP address
-	ipAddress := net.ParseAddress(nodeInfo.Common.ListenIP)
+	ipAddress := net.ParseAddress(listenIP)
 	in.ListenOn = &coreConf.Address{Address: ipAddress}
 	// Set SniffingConfig
 	sniffingConfig := &coreConf.SniffingConfig{
@@ -173,6 +177,33 @@ func buildInbound(nodeInfo *panel.NodeInfo, tag string) (*core.InboundHandlerCon
 	}
 	in.Tag = tag
 	return in.Build()
+}
+
+func normalizeNodeListenIP(raw string) string {
+	listenIP := strings.TrimSpace(raw)
+	if strings.HasPrefix(listenIP, "[") && strings.HasSuffix(listenIP, "]") {
+		return strings.TrimPrefix(strings.TrimSuffix(listenIP, "]"), "[")
+	}
+	return listenIP
+}
+
+func resolveNodeListenIP(raw string) string {
+	listenIP := normalizeNodeListenIP(raw)
+	switch listenIP {
+	case "", "0.0.0.0":
+		return "::"
+	default:
+		return listenIP
+	}
+}
+
+func shouldFallbackNodeListenIP(raw string) bool {
+	switch normalizeNodeListenIP(raw) {
+	case "", "0.0.0.0", "::":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveTLSALPN(nodeInfo *panel.NodeInfo) *coreConf.StringList {
