@@ -101,6 +101,51 @@ func (s *edgeControlState) RecordTraffic(ctx context.Context, record node.EdgeTr
 	})
 }
 
+func (s *edgeControlState) UpsertSidecar(ctx context.Context, spec node.EdgeSidecarSpec) (node.EdgeSidecarApplyReport, error) {
+	client := s.currentClient()
+	if client == nil {
+		return node.EdgeSidecarApplyReport{}, fmt.Errorf("keli-edge client is disabled")
+	}
+	report, err := client.UpsertSidecar(ctx, edge.SidecarSpec{
+		Name:           spec.Name,
+		Protocol:       spec.Protocol,
+		Enabled:        spec.Enabled,
+		Binary:         spec.Binary,
+		Args:           spec.Args,
+		Env:            spec.Env,
+		GeneratedFiles: edgeGeneratedFiles(spec.GeneratedFiles),
+	})
+	if err != nil {
+		return node.EdgeSidecarApplyReport{}, err
+	}
+	failures := make([]node.EdgeSidecarFailure, 0, len(report.Failed))
+	for _, failure := range report.Failed {
+		failures = append(failures, node.EdgeSidecarFailure{
+			Name:  failure.Name,
+			Error: failure.Error,
+		})
+	}
+	return node.EdgeSidecarApplyReport{
+		Started: report.Started,
+		Stopped: report.Stopped,
+		Failed:  failures,
+	}, nil
+}
+
+func edgeGeneratedFiles(files []node.EdgeGeneratedFile) []edge.GeneratedFile {
+	if len(files) == 0 {
+		return nil
+	}
+	result := make([]edge.GeneratedFile, 0, len(files))
+	for _, file := range files {
+		result = append(result, edge.GeneratedFile{
+			Path:     file.Path,
+			Contents: file.Contents,
+		})
+	}
+	return result
+}
+
 func (s *edgeControlState) currentClient() *edge.Client {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

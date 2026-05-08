@@ -167,6 +167,15 @@ func (v *V2Core) AddUsers(p *AddUsersParams) (added int, err error) {
 }
 
 func (v *V2Core) AddUsersWithContext(ctx context.Context, p *AddUsersParams) (added int, err error) {
+	if p.NodeInfo != nil && IsExternalSidecarNodeType(p.NodeInfo.Type) {
+		v.users.mapLock.Lock()
+		for i := range p.Users {
+			v.users.uidMap[format.UserTag(p.Tag, p.Users[i].Uuid)] = p.Users[i].Id
+		}
+		v.users.mapLock.Unlock()
+		return len(p.Users), nil
+	}
+
 	v.access.Lock()
 	man, err := v.getUserManagerLocked(p.Tag)
 	v.access.Unlock()

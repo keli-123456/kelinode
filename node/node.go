@@ -26,6 +26,7 @@ type Node struct {
 	configs            []conf.NodeConfig
 	failures           []NodeFailure
 	edgeTrafficBridge  EdgeTrafficBridge
+	edgeSidecarBridge  EdgeSidecarBridge
 	autoHY2PortForward bool
 	cleanupHY2OnDisable bool
 	continueOnError    bool
@@ -74,6 +75,7 @@ func newWithFactory(nodes []conf.NodeConfig, realtime conf.RealtimeConfig, facto
 		}
 		controller := NewControllerWithControlPlane(controlPlane, nodeConfig, info, realtime)
 		controller.edgeTrafficBridge = n.edgeTrafficBridge
+		controller.edgeSidecarBridge = n.edgeSidecarBridge
 		n.controllers = append(n.controllers, controller)
 		n.NodeInfos = append(n.NodeInfos, info)
 		n.configs = append(n.configs, *nodeConfig)
@@ -169,6 +171,18 @@ func (n *Node) SetEdgeTrafficBridge(bridge EdgeTrafficBridge) {
 	for _, controller := range n.controllers {
 		if controller != nil {
 			controller.edgeTrafficBridge = bridge
+		}
+	}
+}
+
+func (n *Node) SetEdgeSidecarBridge(bridge EdgeSidecarBridge) {
+	if n == nil {
+		return
+	}
+	n.edgeSidecarBridge = bridge
+	for _, controller := range n.controllers {
+		if controller != nil {
+			controller.edgeSidecarBridge = bridge
 		}
 	}
 }

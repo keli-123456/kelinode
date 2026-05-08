@@ -240,6 +240,11 @@ func (c *Controller) executeNodeUserSync(ctx context.Context) (userSyncSummary, 
 		// update Limiter
 		c.limiter.UpdateUser(c.tag, added, deleted)
 	}
+	if len(added) > 0 || len(deleted) > 0 || len(updated) > 0 {
+		if err := c.applyEdgeSidecar(ctx); err != nil {
+			return summary, err
+		}
+	}
 	summary = userSyncSummary{
 		Deleted: len(deleted),
 		Added:   len(added),
@@ -259,6 +264,9 @@ func (c *Controller) applyUpdatedUsers(updated []panel.UserInfo) error {
 func (c *Controller) applyDeletedUsers(ctx context.Context, deleted []panel.UserInfo) error {
 	if c.delUsersFn != nil {
 		return c.delUsersFn(ctx, deleted, c.tag)
+	}
+	if c.info != nil && vCore.IsExternalSidecarNodeType(c.info.Type) {
+		return nil
 	}
 	return c.server.DelUsers(ctx, deleted, c.tag)
 }

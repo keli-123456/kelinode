@@ -66,6 +66,9 @@ type CommonNode struct {
 	Obfs                    string `json:"obfs"`
 	ObfsPassword            string `json:"obfs-password"`
 	Ignore_Client_Bandwidth bool   `json:"ignore_client_bandwidth"`
+	// external sidecar protocols
+	Transport    string `json:"transport"`
+	Multiplexing string `json:"multiplexing"`
 }
 
 type PortValue string
@@ -200,7 +203,7 @@ func (c *Client) GetNodeInfo(ctx context.Context) (node *NodeInfo, err error) {
 		c.nodeEtag = etag
 	}
 	switch cm.Protocol {
-	case "vmess", "trojan", "hysteria2", "tuic", "anytls", "vless", "socks", "http":
+	case "vmess", "trojan", "hysteria2", "tuic", "anytls", "vless", "socks", "http", "mieru":
 		node.Type = cm.Protocol
 		node.Security = cm.Tls
 	case "shadowsocks":

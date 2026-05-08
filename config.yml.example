@@ -27,6 +27,7 @@ runtime:
 edge:
   # Experimental local Rust data-plane / sidecar supervisor.
   # Keep disabled until keli-edge is deployed on the same machine.
+  # Required for external sidecar protocols such as Mieru.
   # When enabled, v2node drains keli-edge traffic counters and reports
   # records tagged as "<node-tag>|<user-uuid>" to the panel.
   enabled: false

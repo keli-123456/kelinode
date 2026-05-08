@@ -169,6 +169,7 @@ func (n *Node) reconcileWithFactory(ctx context.Context, desired []conf.NodeConf
 		cfg := candidate.Config
 		controller := NewControllerWithControlPlane(candidate.ControlPlane, &cfg, candidate.Info, realtime)
 		controller.edgeTrafficBridge = n.edgeTrafficBridge
+		controller.edgeSidecarBridge = n.edgeSidecarBridge
 		var err error
 		oldStillActive := false
 		if hasCurrent {

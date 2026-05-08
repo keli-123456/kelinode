@@ -20,6 +20,7 @@ type Controller struct {
 	controlPlane              ControlPlane
 	controlPlaneFactory       ControlPlaneFactory
 	edgeTrafficBridge         EdgeTrafficBridge
+	edgeSidecarBridge         EdgeSidecarBridge
 	tag                       string
 	limiter                   *limiter.Limiter
 	userList                  []panel.UserInfo
@@ -187,6 +188,9 @@ func (c *Controller) activatePreparedStart(state *controllerStartState) error {
 		return fmt.Errorf("add users error: %s", err)
 	}
 	log.WithField("tag", c.tag).Infof("Added %d new users", added)
+	if err := c.applyEdgeSidecar(context.Background()); err != nil {
+		return fmt.Errorf("apply edge sidecar error: %s", err)
+	}
 	c.info = node
 	c.startTasks(node)
 	c.startRealtime()

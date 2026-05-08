@@ -31,6 +31,7 @@ type V2Core struct {
 	access     sync.Mutex
 	Server     *core.Instance
 	users      *UserMap
+	externalSidecarTags map[string]struct{}
 	ihm        inbound.Manager
 	ohm        outbound.Manager
 	dispatcher *dispatcher.DefaultDispatcher
@@ -47,6 +48,7 @@ func New(config *conf.Conf) *V2Core {
 		users: &UserMap{
 			uidMap: make(map[string]int),
 		},
+		externalSidecarTags: make(map[string]struct{}),
 	}
 	return core
 }

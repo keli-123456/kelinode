@@ -2,13 +2,26 @@ package core
 
 import (
 	"fmt"
+	"strings"
 
 	panel "github.com/keli-123456/kelinode/api/v2board"
 )
 
+func IsExternalSidecarNodeType(nodeType string) bool {
+	return nodeType == "mieru"
+}
+
 func (v *V2Core) AddNode(tag string, info *panel.NodeInfo) error {
 	v.access.Lock()
 	defer v.access.Unlock()
+
+	if info != nil && IsExternalSidecarNodeType(info.Type) {
+		if v.externalSidecarTags == nil {
+			v.externalSidecarTags = make(map[string]struct{})
+		}
+		v.externalSidecarTags[tag] = struct{}{}
+		return nil
+	}
 
 	if v.Server == nil || v.ihm == nil {
 		return fmt.Errorf("core is not ready")
@@ -41,6 +54,12 @@ func (v *V2Core) DelNode(tag string) error {
 	v.access.Lock()
 	defer v.access.Unlock()
 
+	if _, ok := v.externalSidecarTags[tag]; ok {
+		delete(v.externalSidecarTags, tag)
+		v.deleteUserIDsForTag(tag)
+		return nil
+	}
+
 	if v.ihm == nil {
 		return fmt.Errorf("core is not ready")
 	}
@@ -50,4 +69,18 @@ func (v *V2Core) DelNode(tag string) error {
 		return fmt.Errorf("remove in error: %s", err)
 	}
 	return nil
+}
+
+func (v *V2Core) deleteUserIDsForTag(tag string) {
+	if v.users == nil {
+		return
+	}
+	prefix := tag + "|"
+	v.users.mapLock.Lock()
+	defer v.users.mapLock.Unlock()
+	for key := range v.users.uidMap {
+		if strings.HasPrefix(key, prefix) {
+			delete(v.users.uidMap, key)
+		}
+	}
 }
