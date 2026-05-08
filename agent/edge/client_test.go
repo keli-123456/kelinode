@@ -81,6 +81,54 @@ func TestClientDrainTraffic(t *testing.T) {
 	}
 }
 
+func TestClientUpsertSidecar(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sidecars/upsert" || r.Method != http.MethodPost {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form failed: %v", err)
+		}
+		if r.Form.Get("name") != "mieru-mita" ||
+			r.Form.Get("protocol") != "mieru" ||
+			r.Form.Get("enabled") != "true" {
+			t.Fatalf("unexpected identity form: %+v", r.Form)
+		}
+		if r.Form.Get("binary") != "mita" || r.Form.Get("args") != "run\n--config\nruntime/mieru.json" {
+			t.Fatalf("unexpected process form: %+v", r.Form)
+		}
+		if r.Form.Get("env") != "MITA_CONFIG_JSON_FILE=runtime/mieru.json" {
+			t.Fatalf("unexpected env form: %+v", r.Form)
+		}
+		if r.Form.Get("file_path") != "runtime/mieru.json" || r.Form.Get("file_contents") != "{}" {
+			t.Fatalf("unexpected generated file form: %+v", r.Form)
+		}
+		_, _ = w.Write([]byte(`{"started":["mieru-mita"],"stopped":[],"failed":[]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second)
+	report, err := client.UpsertSidecar(context.Background(), SidecarSpec{
+		Name:     "mieru-mita",
+		Protocol: "mieru",
+		Enabled:  true,
+		Binary:   "mita",
+		Args:     []string{"run", "--config", "runtime/mieru.json"},
+		Env: map[string]string{
+			"MITA_CONFIG_JSON_FILE": "runtime/mieru.json",
+		},
+		GeneratedFiles: []GeneratedFile{{Path: "runtime/mieru.json", Contents: "{}"}},
+	})
+	if err != nil {
+		t.Fatalf("upsert sidecar failed: %v", err)
+	}
+	if len(report.Started) != 1 || report.Started[0] != "mieru-mita" || len(report.Failed) != 0 {
+		t.Fatalf("unexpected report: %+v", report)
+	}
+}
+
 func TestClientReturnsStatusErrors(t *testing.T) {
 	t.Parallel()
 

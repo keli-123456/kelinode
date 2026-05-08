@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -39,6 +40,32 @@ type trafficRecordJSON struct {
 	User          string `json:"user"`
 	UploadBytes   uint64 `json:"upload_bytes"`
 	DownloadBytes uint64 `json:"download_bytes"`
+}
+
+type SidecarSpec struct {
+	Name           string
+	Protocol       string
+	Enabled        bool
+	Binary         string
+	Args           []string
+	Env            map[string]string
+	GeneratedFiles []GeneratedFile
+}
+
+type GeneratedFile struct {
+	Path     string
+	Contents string
+}
+
+type SidecarApplyReport struct {
+	Started []string         `json:"started"`
+	Stopped []string         `json:"stopped"`
+	Failed  []SidecarFailure `json:"failed"`
+}
+
+type SidecarFailure struct {
+	Name  string `json:"name"`
+	Error string `json:"error"`
 }
 
 func NewClient(baseURL string, timeout time.Duration) *Client {
@@ -96,6 +123,50 @@ func (c *Client) DrainTraffic(ctx context.Context) (TrafficSnapshot, error) {
 		})
 	}
 	return snapshot, nil
+}
+
+func (c *Client) UpsertSidecar(ctx context.Context, spec SidecarSpec) (SidecarApplyReport, error) {
+	values := url.Values{}
+	values.Set("name", spec.Name)
+	values.Set("protocol", spec.Protocol)
+	values.Set("enabled", fmt.Sprintf("%t", spec.Enabled))
+	values.Set("binary", spec.Binary)
+	if len(spec.Args) > 0 {
+		values.Set("args", strings.Join(spec.Args, "\n"))
+	}
+	if len(spec.Env) > 0 {
+		values.Set("env", formatEnvLines(spec.Env))
+	}
+	for i, file := range spec.GeneratedFiles {
+		pathKey := "file_path"
+		contentsKey := "file_contents"
+		if i > 0 {
+			pathKey = fmt.Sprintf("file_path_%d", i)
+			contentsKey = fmt.Sprintf("file_contents_%d", i)
+		}
+		values.Set(pathKey, file.Path)
+		values.Set(contentsKey, file.Contents)
+	}
+
+	var report SidecarApplyReport
+	if err := c.postForm(ctx, "/sidecars/upsert", values, &report); err != nil {
+		return SidecarApplyReport{}, err
+	}
+	return report, nil
+}
+
+func formatEnvLines(env map[string]string) string {
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	lines := make([]string, 0, len(keys))
+	for _, key := range keys {
+		lines = append(lines, key+"="+env[key])
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, target any) error {
