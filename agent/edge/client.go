@@ -29,6 +29,18 @@ type TrafficRecord struct {
 	DownloadBytes uint64
 }
 
+type TrafficSnapshot struct {
+	UploadBytes   uint64          `json:"upload_bytes"`
+	DownloadBytes uint64          `json:"download_bytes"`
+	Users         []TrafficRecord `json:"users"`
+}
+
+type trafficRecordJSON struct {
+	User          string `json:"user"`
+	UploadBytes   uint64 `json:"upload_bytes"`
+	DownloadBytes uint64 `json:"download_bytes"`
+}
+
 func NewClient(baseURL string, timeout time.Duration) *Client {
 	if timeout <= 0 {
 		timeout = 2 * time.Second
@@ -59,6 +71,31 @@ func (c *Client) RecordTraffic(ctx context.Context, record TrafficRecord) error 
 	values.Set("upload", fmt.Sprintf("%d", record.UploadBytes))
 	values.Set("download", fmt.Sprintf("%d", record.DownloadBytes))
 	return c.postForm(ctx, "/traffic", values, nil)
+}
+
+func (c *Client) DrainTraffic(ctx context.Context) (TrafficSnapshot, error) {
+	var raw struct {
+		UploadBytes   uint64              `json:"upload_bytes"`
+		DownloadBytes uint64              `json:"download_bytes"`
+		Users         []trafficRecordJSON `json:"users"`
+	}
+	if err := c.postForm(ctx, "/traffic/drain", nil, &raw); err != nil {
+		return TrafficSnapshot{}, err
+	}
+
+	snapshot := TrafficSnapshot{
+		UploadBytes:   raw.UploadBytes,
+		DownloadBytes: raw.DownloadBytes,
+		Users:         make([]TrafficRecord, 0, len(raw.Users)),
+	}
+	for _, user := range raw.Users {
+		snapshot.Users = append(snapshot.Users, TrafficRecord{
+			User:          user.User,
+			UploadBytes:   user.UploadBytes,
+			DownloadBytes: user.DownloadBytes,
+		})
+	}
+	return snapshot, nil
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, target any) error {

@@ -57,6 +57,30 @@ func TestClientRecordTraffic(t *testing.T) {
 	}
 }
 
+func TestClientDrainTraffic(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/traffic/drain" || r.Method != http.MethodPost {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"upload_bytes":10,"download_bytes":20,"users":[{"user":"node:user","upload_bytes":10,"download_bytes":20}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second)
+	snapshot, err := client.DrainTraffic(context.Background())
+	if err != nil {
+		t.Fatalf("drain traffic failed: %v", err)
+	}
+	if snapshot.UploadBytes != 10 || snapshot.DownloadBytes != 20 || len(snapshot.Users) != 1 {
+		t.Fatalf("unexpected snapshot: %+v", snapshot)
+	}
+	if snapshot.Users[0].User != "node:user" || snapshot.Users[0].UploadBytes != 10 || snapshot.Users[0].DownloadBytes != 20 {
+		t.Fatalf("unexpected user traffic: %+v", snapshot.Users[0])
+	}
+}
+
 func TestClientReturnsStatusErrors(t *testing.T) {
 	t.Parallel()
 
