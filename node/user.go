@@ -33,6 +33,16 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 	}
 
 	userTraffic, rollbackUserTraffic, _ := c.server.GetUserTrafficSlice(c.tag, reportmin)
+	edgeTraffic, edgeErr := c.drainEdgeUserTraffic(ctx, reportmin)
+	if edgeErr != nil {
+		log.WithFields(log.Fields{
+			"tag": c.tag,
+			"err": edgeErr,
+		}).Warn("Drain edge traffic failed")
+	} else if edgeTraffic != nil {
+		c.restoreEdgeTraffic(ctx, edgeTraffic.restoreRecords, "edge traffic not matched to current report")
+		userTraffic = mergeUserTraffic(userTraffic, edgeTraffic.report)
+	}
 	hadTraffic := len(userTraffic) > 0
 
 	onlineDevice, onlineErr := c.limiter.GetOnlineDevice()
@@ -89,6 +99,9 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 		if err != nil {
 			if rollbackUserTraffic != nil {
 				rollbackUserTraffic()
+			}
+			if edgeTraffic != nil {
+				c.restoreEdgeTraffic(ctx, edgeTraffic.reportRecords, "panel traffic report failed")
 			}
 			log.WithFields(log.Fields{
 				"tag": c.tag,

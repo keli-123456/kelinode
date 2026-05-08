@@ -411,6 +411,7 @@ func newNodeForConfig(cfg *conf.Conf) (*node.Node, error) {
 	}
 	if cfg != nil {
 		nodesInstance.SetAutoHY2PortForward(cfg.RuntimeConfig.AutoHY2PortForward)
+		nodesInstance.SetEdgeTrafficBridge(edgeControl)
 	}
 	return nodesInstance, nil
 }

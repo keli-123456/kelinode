@@ -19,6 +19,7 @@ type Controller struct {
 	server                    *core.V2Core
 	controlPlane              ControlPlane
 	controlPlaneFactory       ControlPlaneFactory
+	edgeTrafficBridge         EdgeTrafficBridge
 	tag                       string
 	limiter                   *limiter.Limiter
 	userList                  []panel.UserInfo

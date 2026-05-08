@@ -25,6 +25,7 @@ type Node struct {
 	NodeInfos          []*panel.NodeInfo
 	configs            []conf.NodeConfig
 	failures           []NodeFailure
+	edgeTrafficBridge  EdgeTrafficBridge
 	autoHY2PortForward bool
 	cleanupHY2OnDisable bool
 	continueOnError    bool
@@ -71,7 +72,9 @@ func newWithFactory(nodes []conf.NodeConfig, realtime conf.RealtimeConfig, facto
 			}
 			return nil, fmt.Errorf("get node info [%s-%d] error: %w", nodeConfig.APIHost, nodeConfig.NodeID, err)
 		}
-		n.controllers = append(n.controllers, NewControllerWithControlPlane(controlPlane, nodeConfig, info, realtime))
+		controller := NewControllerWithControlPlane(controlPlane, nodeConfig, info, realtime)
+		controller.edgeTrafficBridge = n.edgeTrafficBridge
+		n.controllers = append(n.controllers, controller)
 		n.NodeInfos = append(n.NodeInfos, info)
 		n.configs = append(n.configs, *nodeConfig)
 	}
@@ -156,6 +159,18 @@ func (n *Node) SetAutoHY2PortForward(enabled bool) {
 		n.cleanupHY2OnDisable = true
 	}
 	n.autoHY2PortForward = enabled
+}
+
+func (n *Node) SetEdgeTrafficBridge(bridge EdgeTrafficBridge) {
+	if n == nil {
+		return
+	}
+	n.edgeTrafficBridge = bridge
+	for _, controller := range n.controllers {
+		if controller != nil {
+			controller.edgeTrafficBridge = bridge
+		}
+	}
 }
 
 func (n *Node) reconcileAutoHY2PortForward() {
