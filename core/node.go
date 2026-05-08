@@ -8,7 +8,7 @@ import (
 )
 
 func IsExternalSidecarNodeType(nodeType string) bool {
-	return nodeType == "mieru"
+	return nodeType == "mieru" || nodeType == "naive"
 }
 
 func (v *V2Core) AddNode(tag string, info *panel.NodeInfo) error {
