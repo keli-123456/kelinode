@@ -572,6 +572,8 @@ github.com/k0kubun/go-ansi v0.0.0-20180517002512-3bf9e2903213 h1:qGQQKEcAR99REcM
 github.com/k0kubun/go-ansi v0.0.0-20180517002512-3bf9e2903213/go.mod h1:vNUNkEQ1e29fT/6vq2aBdFsgNPmy8qMdSay1npru+Sw=
 github.com/keli-123456/keli-core v0.0.0-20260330013654-d45bf4fdd487 h1:ieGMJURZfZLbgCuPMnh2jJigMpZ0tMbUesDmI+5MJJ8=
 github.com/keli-123456/keli-core v0.0.0-20260330013654-d45bf4fdd487/go.mod h1:aSk3wfNldOXbBzQJz2dAHRd+IMj8DwRHWxTEDtIU9ZI=
+github.com/keli-123456/keli-core v0.0.0-20260507132213-63cace73312e h1:fJe5cdp5Xar0NREOWeUsePT70fE/V6bIYQK3x3UyFIM=
+github.com/keli-123456/keli-core v0.0.0-20260507132213-63cace73312e/go.mod h1:aSk3wfNldOXbBzQJz2dAHRd+IMj8DwRHWxTEDtIU9ZI=
 github.com/keybase/go-keychain v0.0.1 h1:way+bWYa6lDppZoZcgMbYsvC7GxljxrskdNInRtuthU=
 github.com/keybase/go-keychain v0.0.1/go.mod h1:PdEILRW3i9D8JcdM+FmY6RwkHGnhHxXwkPPMeUgOK1k=
 github.com/kisielk/errcheck v1.1.0/go.mod h1:EZBBE59ingxPouuu3KfxchcWSUPOHkagtvWXihfKN4Q=
