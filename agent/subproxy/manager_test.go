@@ -34,6 +34,12 @@ func TestProxySubscriptionForwardsToProfileSubscribePath(t *testing.T) {
 		if got := r.Header.Get("User-Agent"); got != "Hiddify" {
 			t.Fatalf("unexpected user agent: %s", got)
 		}
+		if got := r.Header.Get("CF-Connecting-IP"); got != "203.0.113.9" {
+			t.Fatalf("unexpected cf connecting ip: %s", got)
+		}
+		if got := r.Header.Get("X-Forwarded-For"); got != "203.0.113.9, 198.51.100.8" {
+			t.Fatalf("unexpected x-forwarded-for: %s", got)
+		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header: http.Header{
@@ -53,6 +59,9 @@ func TestProxySubscriptionForwardsToProfileSubscribePath(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/sub/site-a/token-123?flag=sing-box", nil)
 	req.Header.Set("User-Agent", "Hiddify")
+	req.Header.Set("CF-Connecting-IP", "203.0.113.9")
+	req.Header.Set("X-Forwarded-For", "203.0.113.9")
+	req.RemoteAddr = "198.51.100.8:51234"
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)

@@ -432,7 +432,7 @@ func (m *Manager) proxySubscription(w http.ResponseWriter, r *http.Request, prof
 	copyRequestHeaders(req.Header, r.Header)
 	req.Header.Set("X-Forwarded-Host", r.Host)
 	if ip := clientIP(r); ip != "" {
-		req.Header.Set("X-Forwarded-For", ip)
+		appendForwardedFor(req.Header, ip)
 	}
 
 	resp, err := m.client.Do(req)
@@ -988,6 +988,18 @@ func copyResponseHeaders(dst http.Header, src http.Header) {
 			dst.Add(key, value)
 		}
 	}
+}
+
+func appendForwardedFor(headers http.Header, ip string) {
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return
+	}
+	if existing := strings.TrimSpace(headers.Get("X-Forwarded-For")); existing != "" {
+		headers.Set("X-Forwarded-For", existing+", "+ip)
+		return
+	}
+	headers.Set("X-Forwarded-For", ip)
 }
 
 func isHopByHopHeader(key string) bool {
